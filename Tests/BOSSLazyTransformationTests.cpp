@@ -10,6 +10,7 @@
 #include <variant>
 #include <vector>
 
+// #include "../Source/BOSSLazyTransformationEngine.cpp"
 #include "../Source/BOSSLazyTransformationEngine.hpp"
 
 using boss::Expression;
@@ -23,6 +24,12 @@ using Catch::Generators::take;
 using Catch::Generators::values;
 using std::vector;
 using namespace Catch::Matchers;
+using boss::engines::LazyTransformation::utilities::getUsedSymbolsFromExpressions;
+using boss::engines::LazyTransformation::utilities::isCardinalityReducingOperator;
+using boss::engines::LazyTransformation::utilities::isConditionMoveable;
+using boss::engines::LazyTransformation::utilities::isInTransformationColumns;
+using boss::engines::LazyTransformation::utilities::isOperationReversible;
+using boss::engines::LazyTransformation::utilities::isStaticValue;
 using boss::expressions::CloneReason;
 using boss::expressions::ComplexExpression;
 using boss::expressions::generic::get;
@@ -61,10 +68,11 @@ TEST_CASE("Is in transformation columns works correctly") {
   boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
   auto extractedColumns = engine.extractTransformationColumns();
   CHECK(extractedColumns == transformationColumns);
-  CHECK(true == engine.isInTransformationColumns("A"_));
-  CHECK(true == engine.isInTransformationColumns("B"_));
-  CHECK(true == engine.isInTransformationColumns("C"_));
-  CHECK(false == engine.isInTransformationColumns("D"_));
+
+  CHECK(true == isInTransformationColumns(transformationColumns, "A"_));
+  CHECK(true == isInTransformationColumns(transformationColumns, "B"_));
+  CHECK(true == isInTransformationColumns(transformationColumns, "C"_));
+  CHECK(false == isInTransformationColumns(transformationColumns, "D"_));
 }
 
 TEST_CASE("Is condition moveable works correctly") {
@@ -72,16 +80,17 @@ TEST_CASE("Is condition moveable works correctly") {
       "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
       "As"_("A"_, "A"_, "B"_, "B_", "C"_, "C"_));
   boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
+  const std::unordered_set<boss::Symbol> transformationColumns{"A"_, "B"_, "C"_};
 
-  ComplexExpression simpleEquality = "Equal"_("A"_, 1);
-  ComplexExpression simpleGreaterThan = "Greater"_("A"_, 1);
-  ComplexExpression equalityWithIncorrectColumn = "Equal"_("D"_, 1);
-  ComplexExpression equalityWithOneCorrectColumnOneIncorrectColumns = "Equal"_("A"_, "D"_);
+  const ComplexExpression simpleEquality = "Equal"_("A"_, 1);
+  const ComplexExpression simpleGreaterThan = "Greater"_("A"_, 1);
+  const ComplexExpression equalityWithIncorrectColumn = "Equal"_("D"_, 1);
+  const ComplexExpression equalityWithOneCorrectColumnOneIncorrectColumns = "Equal"_("A"_, "D"_);
 
-  CHECK(true == engine.isConditionMoveable(simpleEquality));
-  CHECK(true == engine.isConditionMoveable(simpleGreaterThan));
-  CHECK(false == engine.isConditionMoveable(equalityWithIncorrectColumn));
-  CHECK(false == engine.isConditionMoveable(equalityWithOneCorrectColumnOneIncorrectColumns));
+  CHECK(true == isConditionMoveable(simpleEquality, transformationColumns));
+  CHECK(true == isConditionMoveable(simpleGreaterThan, transformationColumns));
+  CHECK(false == isConditionMoveable(equalityWithIncorrectColumn, transformationColumns));
+  CHECK(false == isConditionMoveable(equalityWithOneCorrectColumnOneIncorrectColumns, transformationColumns));
 }
 
 TEST_CASE("Get used symbols from expressions works correctly") {
@@ -89,6 +98,7 @@ TEST_CASE("Get used symbols from expressions works correctly") {
       "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
       "As"_("A"_, "A"_, "B"_, "B_", "C"_, "C"_));
   boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
+  std::unordered_set<boss::Symbol> transformationColumns = {"A"_, "B"_, "C"_};
 
   ComplexExpression simpleEquality = "Equal"_("A"_, 1);
   ComplexExpression simpleGreaterThan = "Greater"_("B"_, "C"_);
@@ -104,10 +114,11 @@ TEST_CASE("Get used symbols from expressions works correctly") {
   std::unordered_set<boss::Symbol> complexAndUsedSymbols = {};
   std::unordered_set<boss::Symbol> complexNestedExpressionUsedSymbols = {};
 
-  engine.getUsedSymbolsFromExpressions(std::move(simpleEquality), simpleEqualityUsedSymbols);
-  engine.getUsedSymbolsFromExpressions(std::move(simpleGreaterThan), simpleGreaterThanUsedSymbols);
-  engine.getUsedSymbolsFromExpressions(std::move(complexAnd), complexAndUsedSymbols);
-  engine.getUsedSymbolsFromExpressions(std::move(complexNestedExpression), complexNestedExpressionUsedSymbols);
+  getUsedSymbolsFromExpressions(std::move(simpleEquality), simpleEqualityUsedSymbols, transformationColumns);
+  getUsedSymbolsFromExpressions(std::move(simpleGreaterThan), simpleGreaterThanUsedSymbols, transformationColumns);
+  getUsedSymbolsFromExpressions(std::move(complexAnd), complexAndUsedSymbols, transformationColumns);
+  getUsedSymbolsFromExpressions(std::move(complexNestedExpression), complexNestedExpressionUsedSymbols,
+                                transformationColumns);
 
   CHECK(simpleEqualityUsedSymbols == std::unordered_set<boss::Symbol>{"A"_});
   CHECK(simpleGreaterThanUsedSymbols == std::unordered_set<boss::Symbol>{"B"_, "C"_});

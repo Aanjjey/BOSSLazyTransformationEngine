@@ -10,6 +10,34 @@
 
 namespace boss::engines::LazyTransformation {
 
+namespace utilities {
+
+bool isCardinalityReducingOperator(const Symbol &op);
+
+bool isStaticValue(const Expression &expr);
+
+bool isInTransformationColumns(const std::unordered_set<Symbol> transformationColumns, const Symbol &symbol);
+
+bool isConditionMoveable(const ComplexExpression &condition, std::unordered_set<Symbol> transformationColumns);
+
+void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols);
+
+void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols,
+                                   std::unordered_set<Symbol> &transformationColumns);
+
+std::unordered_set<Symbol> getUsedTransformationColumns(const Expression &expr,
+                                                        const std::unordered_set<Symbol> &transformationColumns);
+
+bool canMoveConditionThroughProjection(const ComplexExpression &projectionOperator,
+                                       const ComplexExpression &extractedCondition);
+
+bool isOperationReversible(const Expression &expr);
+
+ComplexExpression addConditionToWhereOperator(ComplexExpression &&whereOperator, ComplexExpression &&condition);
+}  // namespace utilities
+
+static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
+
 class Engine {
  private:
   ComplexExpression transformationQuery;
@@ -34,18 +62,16 @@ class Engine {
   // Default destructor
   ~Engine() = default;
 
-  bool isInTransformationColumns(const Symbol &symbol);
-  bool isConditionMoveable(const ComplexExpression &condition);
   std::unordered_set<Symbol> extractTransformationColumns();
   Expression extractOperatorsFromSelect(ComplexExpression &&expr, std::vector<ComplexExpression> &conditionsToMove,
                                         std::unordered_set<Symbol> &projectionColumns);
-  void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols);
+  void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols,
+                                     bool addAll = false);
   void extractOperatorsFromTop(const ComplexExpression &expr);
 
-  Expression extractOperatorsFromExpression(ComplexExpression &&expr, std::vector<ComplexExpression> &selectConditions,
-                                            std::unordered_set<Symbol> &projectionColumns);
-  Expression processExpression(Expression &&inputExpr, std::vector<ComplexExpression> &selectConditions,
-                               std::unordered_set<Symbol> &projectionColumns);
+  Expression processExpression(Expression &&inputExpr, std::unordered_set<Symbol> &projectionColumns);
+  // void moveExctractedSelectExpressionsToTransformation(ComplexExpression &&extractedExpressions);
+  std::unordered_set<Symbol> containsOnlyTransformationColumns(const Expression &expr);
 
   boss::Expression evaluate(boss::Expression &&e);
 };
