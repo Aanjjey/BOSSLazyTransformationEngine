@@ -38,6 +38,9 @@ ComplexExpression addConditionToWhereOperator(ComplexExpression &&whereOperator,
 
 static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
 
+ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression &&transformingExpression,
+                                                                 ComplexExpression &&extractedExpressions);
+
 class Engine {
  private:
   ComplexExpression transformationQuery;

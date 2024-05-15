@@ -279,8 +279,8 @@ Expression Engine::extractOperatorsFromSelect(ComplexExpression&& expr,
 
 // ---------------------------- EXPRESSION PROPAGATION RELATED OPERATIONS START ----------------------------
 
-ComplexExpression moveExctractedSelectExpressionsToTransformation(ComplexExpression&& transformingExpression,
-                                                                  ComplexExpression&& extractedExpressions) {
+ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression&& transformingExpression,
+                                                                 ComplexExpression&& extractedExpressions) {
   if (transformingExpression.getHead() == "Select"_) {
     auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
     auto& selectInput = std::get<ComplexExpression>(dynamics[0]);
@@ -296,7 +296,7 @@ ComplexExpression moveExctractedSelectExpressionsToTransformation(ComplexExpress
     } else if (selectInput.getHead() == "Project"_) {
       if (utilities::canMoveConditionThroughProjection(selectInput, extractedExpressions)) {
         auto newSelectInput =
-            moveExctractedSelectExpressionsToTransformation(std::move(selectInput), std::move(extractedExpressions));
+            moveExctractedSelectExpressionToTransformation(std::move(selectInput), std::move(extractedExpressions));
         return boss::ComplexExpression(std::move(head), std::move(statics),
                                        boss::ExpressionArguments(std::move(newSelectInput), std::move(dynamics[1])),
                                        std::move(spans));
@@ -337,8 +337,8 @@ Expression Engine::processExpression(Expression&& inputExpr, std::unordered_set<
               auto expression =
                   extractOperatorsFromSelect(std::move(complexExpr), extractedExpressions, projectionColumns);
               for (auto& extractedExpr : extractedExpressions) {
-                transformationQuery = moveExctractedSelectExpressionsToTransformation(std::move(transformationQuery),
-                                                                                      std::move(extractedExpr));
+                transformationQuery = moveExctractedSelectExpressionToTransformation(std::move(transformationQuery),
+                                                                                     std::move(extractedExpr));
               }
               return std::move(expression);
             } else if (complexExpr.getHead() == "Project"_) {
