@@ -158,26 +158,72 @@ bool isOperationReversible(const Expression& expr) {
   }
 }
 
+// Merges two consecutive SELECT operators
+// If there aren't two consecutive SELECT operators, then the original expression is returned
+ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression&& outerSelect) {
+  if (outerSelect.getHead() != "Select"_) {
+    return std::move(outerSelect);
+  }
+  auto [outerHead, outerStatics, outerDynamics, outerSpans] = std::move(outerSelect).decompose();
+  if (!std::holds_alternative<ComplexExpression>(outerDynamics[0])) {
+    return boss::ComplexExpression(std::move(outerHead), std::move(outerStatics), std::move(outerDynamics),
+                                   std::move(outerSpans));
+  }
+  auto innerSelect = std::get<ComplexExpression>(std::move(outerDynamics[0]));
+
+  if (innerSelect.getHead() != "Select"_) {
+    outerSelect = boss::ComplexExpression(
+        std::move(outerHead), std::move(outerStatics),
+        boss::ExpressionArguments(std::move(innerSelect), std::move(outerDynamics[1])), std::move(outerSpans));
+    return std::move(outerSelect);
+  }
+
+  auto [innerHead, innerStatics, innerDynamics, innerSpans] = std::move(innerSelect).decompose();
+  auto outerWhere = std::get<ComplexExpression>(std::move(outerDynamics[1]));
+  auto innerWhere = std::get<ComplexExpression>(std::move(innerDynamics[1]));
+  auto [innerWhereHead, innerWhereStatics, innerWhereDynamics, innerWhereSpans] = std::move(innerWhere).decompose();
+  auto innerWhereCondition = std::get<ComplexExpression>(std::move(innerWhereDynamics[0]));
+  auto newOuterWhere = addConditionToWhereOperator(std::move(outerWhere), std::move(innerWhereCondition));
+  auto newOuterSelect = boss::ComplexExpression(
+      std::move(outerHead), std::move(outerStatics),
+      boss::ExpressionArguments(std::move(innerDynamics[0]), std::move(newOuterWhere)), std::move(outerSpans));
+  return std::move(newOuterSelect);
+}
+
 ComplexExpression addConditionToWhereOperator(ComplexExpression&& whereOperator, ComplexExpression&& condition) {
   auto [whereHead, whereStatics, whereDynamics, whereSpans] = std::move(whereOperator).decompose();
   auto whereDynamicsExpression = std::get<ComplexExpression>(std::move(whereDynamics[0]));
   if (whereDynamicsExpression.getHead() == "And"_) {
     auto [andHead, andStatics, andDynamics, andSpans] = std::move(whereDynamicsExpression).decompose();
-    andDynamics.emplace_back(std::move(condition));
-    whereDynamicsExpression =
+    if (condition.getHead() == "And"_) {
+      auto [conditionHead, conditionStatics, conditionDynamics, conditionSpans] = std::move(condition).decompose();
+      for (auto& subCondition : conditionDynamics) {
+        andDynamics.emplace_back(std::move(subCondition));
+      }
+    } else {
+      andDynamics.emplace_back(std::move(condition));
+    }
+    auto reconstructedWhereDynamicsExpression =
         boss::ComplexExpression(std::move(andHead), std::move(andStatics), std::move(andDynamics), std::move(andSpans));
     return boss::ComplexExpression(std::move(whereHead), std::move(whereStatics),
-                                   boss::ExpressionArguments(std::move(whereDynamicsExpression)),
+                                   boss::ExpressionArguments(std::move(reconstructedWhereDynamicsExpression)),
                                    std::move(whereSpans));
   } else {
-    whereDynamicsExpression = boss::ComplexExpression(
-        "And"_, {}, boss::ExpressionArguments(std::move(whereDynamicsExpression), std::move(condition)), {});
-    return boss::ComplexExpression(std::move(whereHead), std::move(whereStatics),
-                                   boss::ExpressionArguments(std::move(whereDynamicsExpression)),
-                                   std::move(whereSpans));
+    if (condition.getHead() == "And"_) {
+      auto [conditionHead, conditionStatics, conditionDynamics, conditionSpans] = std::move(condition).decompose();
+      conditionDynamics.emplace_back(std::move(whereDynamicsExpression));
+      auto newWhereDynamics = boss::ComplexExpression(std::move(conditionHead), std::move(conditionStatics),
+                                                      std::move(conditionDynamics), std::move(conditionSpans));
+      return boss::ComplexExpression(std::move(whereHead), std::move(whereStatics),
+                                     boss::ExpressionArguments(std::move(newWhereDynamics)), std::move(whereSpans));
+    } else {
+      auto newWhereDynamics = boss::ComplexExpression(
+          "And"_, {}, boss::ExpressionArguments(std::move(whereDynamicsExpression), std::move(condition)), {});
+      return boss::ComplexExpression(std::move(whereHead), std::move(whereStatics),
+                                     boss::ExpressionArguments(std::move(newWhereDynamics)), std::move(whereSpans));
+    }
   }
 }
-
 }  // namespace utilities
 
 Engine::Engine(ComplexExpression&& transformationQuery)
@@ -280,45 +326,34 @@ Expression Engine::extractOperatorsFromSelect(ComplexExpression&& expr,
 // ---------------------------- EXPRESSION PROPAGATION RELATED OPERATIONS START ----------------------------
 
 ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression&& transformingExpression,
-                                                                 ComplexExpression&& extractedExpressions) {
+                                                                 ComplexExpression&& extractedExpression) {
   if (transformingExpression.getHead() == "Select"_) {
     auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-    auto& selectInput = std::get<ComplexExpression>(dynamics[0]);
+    auto selectInput = std::get<ComplexExpression>(std::move(dynamics[0]));
+    auto newSelectInput =
+        moveExctractedSelectExpressionToTransformation(std::move(selectInput), std::move(extractedExpression));
+    auto newTransformingExpression = boss::ComplexExpression(std::move(head), std::move(statics),
+                                                             boss::ExpressionArguments(std::move(newSelectInput)), {});
+    return std::move(utilities::mergeConsecutiveSelectOperators(std::move(newTransformingExpression)));
     // For the Table or Column we can't propagate further, so add it to the WHERE operator
-    if (selectInput.getHead() == "Table"_ || selectInput.getHead() == "Column"_) {
-      auto whereOperator = std::get<ComplexExpression>(std::move(dynamics[1]));
-      auto newWhereOperator =
-          utilities::addConditionToWhereOperator(std::move(whereOperator), std::move(extractedExpressions));
+  } else if (transformingExpression.getHead() == "Project"_) {
+    if (utilities::canMoveConditionThroughProjection(transformingExpression, extractedExpression)) {
+      auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
+      auto projectInput = std::get<ComplexExpression>(std::move(dynamics[0]));
+      // TODO: Need to modify the projection function and the extractedExpression
+      auto newProjectInput =
+          moveExctractedSelectExpressionToTransformation(std::move(projectInput), std::move(extractedExpression));
       return boss::ComplexExpression(std::move(head), std::move(statics),
-                                     boss::ExpressionArguments(std::move(selectInput), std::move(newWhereOperator)),
+                                     boss::ExpressionArguments(std::move(newProjectInput), std::move(dynamics[1])),
                                      std::move(spans));
-      // For project we need to check if we can move through it, as Project might apply irreversible transformations
-    } else if (selectInput.getHead() == "Project"_) {
-      if (utilities::canMoveConditionThroughProjection(selectInput, extractedExpressions)) {
-        auto newSelectInput =
-            moveExctractedSelectExpressionToTransformation(std::move(selectInput), std::move(extractedExpressions));
-        return boss::ComplexExpression(std::move(head), std::move(statics),
-                                       boss::ExpressionArguments(std::move(newSelectInput), std::move(dynamics[1])),
-                                       std::move(spans));
-      } else {
-        auto whereOperator = std::get<ComplexExpression>(std::move(dynamics[1]));
-        auto newWhereOperator =
-            utilities::addConditionToWhereOperator(std::move(whereOperator), std::move(extractedExpressions));
-        return boss::ComplexExpression(std::move(head), std::move(statics),
-                                       boss::ExpressionArguments(std::move(selectInput), std::move(newWhereOperator)),
-                                       std::move(spans));
-      }
     }
-    return std::move(transformingExpression);
-  } else {
-    // TODO: Add support for other operators: Join, Group, etc.
-    // Encapsulate the transformingExpression into the new select
-    auto newWhere =
-        boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(extractedExpressions)), {});
-    auto newSelect = boss::ComplexExpression(
-        "Select"_, {}, boss::ExpressionArguments(std::move(transformingExpression), std::move(newWhere)), {});
-    return std::move(newSelect);
   }
+  // TODO: Add support for other operators: Join, Group, etc.
+  // Encapsulate the transformingExpression into the new select
+  auto newWhere = boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(extractedExpression)), {});
+  auto newSelect = boss::ComplexExpression(
+      "Select"_, {}, boss::ExpressionArguments(std::move(transformingExpression), std::move(newWhere)), {});
+  return std::move(newSelect);
 }
 
 // ---------------------------- EXPRESSION PROPAGATION RELATED OPERATIONS END ----------------------------
@@ -332,7 +367,9 @@ Expression Engine::processExpression(Expression&& inputExpr, std::unordered_set<
   return std::visit(
       boss::utilities::overload(
           [this, &projectionColumns](ComplexExpression&& complexExpr) -> Expression {
-            if (complexExpr.getHead() == "Select"_) {
+            if (complexExpr.getHead() == "Transformation"_) {
+              return boss::Expression(std::move(complexExpr));
+            } else if (complexExpr.getHead() == "Select"_) {
               std::vector<ComplexExpression> extractedExpressions = {};
               auto expression =
                   extractOperatorsFromSelect(std::move(complexExpr), extractedExpressions, projectionColumns);
@@ -342,8 +379,7 @@ Expression Engine::processExpression(Expression&& inputExpr, std::unordered_set<
               }
               return std::move(expression);
             } else if (complexExpr.getHead() == "Project"_) {
-              // TODO: Think if the project is needed, or can we run getUsedTransformationColumns on the
-              // expression
+              // TODO: Think if the project is needed, or can we run getUsedTransformationColumns on the expression
               auto [head, _, dynamics, unused] = std::move(complexExpr).decompose();
               // Process Project's input expression
               auto& projectionInputExpr = std::get<ComplexExpression>(dynamics[0]);
@@ -381,13 +417,8 @@ Expression Engine::evaluate(Expression&& expr) {
                         [this](ComplexExpression&& complexExpr) -> Expression {
                           std::unordered_set<Symbol> usedSymbols = {};
 
-                          // TODO: will need to return a transformationQuery followed
-                          // by a modified user query or
-                          //       a modified user query with a transformationQuery
-                          //       inside
-                          // ? Maybe add a special symbol of the transformation query,
-                          // so it can be easily switched into the modified expression
                           Expression result = processExpression(std::move(complexExpr), usedSymbols);
+                          // TODO: Find "Transform" operator and replace it with the transformationQuery
                           return result;
                         },
                         [this](Symbol&& symbol) -> Expression { return std::move(symbol); },

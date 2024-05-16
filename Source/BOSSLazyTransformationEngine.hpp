@@ -33,6 +33,8 @@ bool canMoveConditionThroughProjection(const ComplexExpression &projectionOperat
 
 bool isOperationReversible(const Expression &expr);
 
+ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression &&outerSelect);
+
 ComplexExpression addConditionToWhereOperator(ComplexExpression &&whereOperator, ComplexExpression &&condition);
 }  // namespace utilities
 

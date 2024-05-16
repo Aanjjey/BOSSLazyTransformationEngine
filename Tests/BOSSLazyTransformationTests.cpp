@@ -24,6 +24,7 @@ using Catch::Generators::take;
 using Catch::Generators::values;
 using std::vector;
 using namespace Catch::Matchers;
+using boss::engines::LazyTransformation::moveExctractedSelectExpressionToTransformation;
 using boss::engines::LazyTransformation::utilities::getUsedSymbolsFromExpressions;
 using boss::engines::LazyTransformation::utilities::getUsedTransformationColumns;
 using boss::engines::LazyTransformation::utilities::isCardinalityReducingOperator;
@@ -31,6 +32,7 @@ using boss::engines::LazyTransformation::utilities::isConditionMoveable;
 using boss::engines::LazyTransformation::utilities::isInTransformationColumns;
 using boss::engines::LazyTransformation::utilities::isOperationReversible;
 using boss::engines::LazyTransformation::utilities::isStaticValue;
+using boss::engines::LazyTransformation::utilities::mergeConsecutiveSelectOperators;
 using boss::expressions::CloneReason;
 using boss::expressions::ComplexExpression;
 using boss::expressions::generic::get;
@@ -151,6 +153,68 @@ TEST_CASE("GetUsedTransformationColumns works correctly", "[utilities]") {
 
 TEST_CASE("IsOperationReversible works correctly", "[utilities]") { CHECK(true == isOperationReversible("A"_)); }
 
+TEST_CASE("MergeConsecutiveSelectOperators works correctly", "[utilities]") {
+  ComplexExpression unchangeableSelect = "Select"_(
+      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+      "Where"_("Equal"_("A"_, 1)));
+
+  ComplexExpression mergedSelectOperator = mergeConsecutiveSelectOperators(std::move(unchangeableSelect));
+  CHECK(mergedSelectOperator == "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                                   "Column"_("C"_, "List"_(7, 8, 9))),
+                                          "Where"_("Equal"_("A"_, 1))));
+
+  ComplexExpression nestedSelect =
+      "Select"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                   "Column"_("C"_, "List"_(7, 8, 9))),
+                          "Where"_("Equal"_("A"_, 1))),
+                "Where"_("Greater"_("B"_, "C"_)));
+
+  ComplexExpression mergedComplexSelectOperator = mergeConsecutiveSelectOperators(std::move(nestedSelect));
+  CHECK(mergedComplexSelectOperator ==
+        "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                           "Column"_("C"_, "List"_(7, 8, 9))),
+                  "Where"_("And"_("Greater"_("B"_, "C"_), "Equal"_("A"_, 1)))));
+
+  ComplexExpression nestedSelectWithOuterAnd =
+      "Select"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                   "Column"_("C"_, "List"_(7, 8, 9))),
+                          "Where"_("Equal"_("A"_, 1))),
+                "Where"_("And"_("Equal"_("B"_, 4), "Equal"_("C"_, 7))));
+
+  ComplexExpression mergedComplexSelectOperatorWithOuterAnd =
+      mergeConsecutiveSelectOperators(std::move(nestedSelectWithOuterAnd));
+  CHECK(mergedComplexSelectOperatorWithOuterAnd ==
+        "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                           "Column"_("C"_, "List"_(7, 8, 9))),
+                  "Where"_("And"_("Equal"_("B"_, 4), "Equal"_("C"_, 7), "Equal"_("A"_, 1)))));
+
+  ComplexExpression nestedSelectWithInnerAnd =
+      "Select"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                   "Column"_("C"_, "List"_(7, 8, 9))),
+                          "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("C"_, 7)))),
+                "Where"_("Equal"_("B"_, 4)));
+
+  ComplexExpression mergedComplexSelectOperatorWithInnerAnd =
+      mergeConsecutiveSelectOperators(std::move(nestedSelectWithInnerAnd));
+  CHECK(mergedComplexSelectOperatorWithInnerAnd ==
+        "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                           "Column"_("C"_, "List"_(7, 8, 9))),
+                  "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("C"_, 7), "Equal"_("B"_, 4)))));
+
+  ComplexExpression nestedSelectWithInnerAndOuterAnd =
+      "Select"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                   "Column"_("C"_, "List"_(7, 8, 9))),
+                          "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("C"_, 7)))),
+                "Where"_("And"_("Equal"_("B"_, 4), "Equal"_("C"_, 8))));
+
+  ComplexExpression mergedComplexSelectOperatorWithInnerAndOuterAnd =
+      mergeConsecutiveSelectOperators(std::move(nestedSelectWithInnerAndOuterAnd));
+  CHECK(mergedComplexSelectOperatorWithInnerAndOuterAnd ==
+        "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                           "Column"_("C"_, "List"_(7, 8, 9))),
+                  "Where"_("And"_("Equal"_("B"_, 4), "Equal"_("C"_, 8), "Equal"_("A"_, 1), "Greater"_("C"_, 7)))));
+}
+
 TEST_CASE("AddConditionToWhereOperator works correctly", "[utilities]") {
   ComplexExpression simpleWhereOperator = "Where"_("Equal"_("A"_, 1));
   ComplexExpression conditionToAdd = "Greater"_("B"_, "C"_);
@@ -166,6 +230,14 @@ TEST_CASE("AddConditionToWhereOperator works correctly", "[utilities]") {
                                                                                 std::move(newConditionToAdd));
 
   CHECK(updatedComplexWhereOperator == "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("C"_, 9))));
+
+  ComplexExpression complexWhereOperatorWithAnd = "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_)));
+  ComplexExpression newConditionToAddWithAnd = "And"_("Equal"_("C"_, 9), "Greater"_("A"_, "D"_));
+  ComplexExpression updatedComplexWhereOperatorWithAnd =
+      boss::engines::LazyTransformation::utilities::addConditionToWhereOperator(std::move(complexWhereOperatorWithAnd),
+                                                                                std::move(newConditionToAddWithAnd));
+  CHECK(updatedComplexWhereOperatorWithAnd ==
+        "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("C"_, 9), "Greater"_("A"_, "D"_))));
 }
 
 TEST_CASE("ExtractTransformationColumns works correctly") {
@@ -229,6 +301,22 @@ TEST_CASE("Extract operators from select works correctly") {
   CHECK(updatedExpression ==
         "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
                   "Where"_("And"_("Equal"_("D"_, 9), "Greater"_("A"_, "D"_)))));
+}
+
+TEST_CASE("MoveExctractedSelectExpressionToTransformation works correctly") {
+  ComplexExpression transformationExpression = "Project"_(
+      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
+
+  ComplexExpression simpleEqualExpression = "Equal"_("A"_, 1);
+
+  ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+      std::move(transformationExpression), std::move(simpleEqualExpression));
+  CHECK(updatedTransformationExpression ==
+        "Project"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                      "Column"_("C"_, "List"_(7, 8, 9))),
+                             "Where"_("Equal"_("A"_, 1))),
+                   "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
 }
 
 int main(int argc, char *argv[]) {
