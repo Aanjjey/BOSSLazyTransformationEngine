@@ -10,45 +10,6 @@
 
 namespace boss::engines::LazyTransformation {
 
-namespace utilities {
-
-bool isCardinalityReducingOperator(const Symbol &op);
-
-bool isStaticValue(const Expression &expr);
-
-bool isInTransformationColumns(const std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
-                               const Symbol &symbol);
-
-bool isConditionMoveable(const ComplexExpression &condition,
-                         std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
-                         std::unordered_set<Symbol> &usedSymbols);
-
-void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols);
-
-void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols,
-                                   std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns);
-
-std::unordered_set<Symbol> getUsedTransformationColumns(
-    const Expression &expr, const std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns);
-
-std::unordered_set<Symbol> getAllDependentSymbols(
-    const std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumnsDependencies,
-    const std::unordered_set<Symbol> &usedSymbols);
-
-bool canMoveConditionThroughProjection(const ComplexExpression &projectionOperator,
-                                       const ComplexExpression &extractedCondition);
-
-bool isOperationReversible(const Expression &expr);
-
-void buildColumnDependencies(const ComplexExpression &expr,
-                             std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumnsDependencies,
-                             std::unordered_set<Symbol> &untouchableColumns);
-
-ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression &&outerSelect);
-
-ComplexExpression addConditionToWhereOperator(ComplexExpression &&whereOperator, ComplexExpression &&condition);
-}  // namespace utilities
-
 static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
 
 ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression &&transformingExpression,

@@ -10,8 +10,8 @@
 #include <variant>
 #include <vector>
 
-// #include "../Source/BOSSLazyTransformationEngine.cpp"
 #include "../Source/BOSSLazyTransformationEngine.hpp"
+#include "../Source/Utilities.hpp"
 
 using boss::Expression;
 using std::string;

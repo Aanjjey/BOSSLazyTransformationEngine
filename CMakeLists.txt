@@ -89,7 +89,7 @@ else()
   set(pluginInstallDir lib)
 endif(MSVC)
 
-set(ImplementationFiles Source/BOSSLazyTransformationEngine.cpp)
+set(ImplementationFiles Source/BOSSLazyTransformationEngine.cpp Source/utilities.cpp)
 set(TestFiles Tests/BOSSLazyTransformationTests.cpp)
 
 add_library(BOSSLazyTransformationEngine MODULE ${ImplementationFiles})
@@ -110,10 +110,11 @@ add_dependencies(LTTests BOSS)
 
 set(PUBLIC_HEADER_LIST
   ${CMAKE_CURRENT_SOURCE_DIR}/Source/BOSSLazyTransformationEngine.hpp;
+  ${CMAKE_CURRENT_SOURCE_DIR}/Source/utilities.hpp;
   )
 
 
-  list(APPEND AllTargets BOSSLazyTransformationEngine)
+list(APPEND AllTargets BOSSLazyTransformationEngine)
 
 foreach(Target IN LISTS AllTargets)
   if(NOT WIN32)
@@ -136,7 +137,8 @@ foreach(Target IN LISTS AllTargets)
 endforeach()
 
 set_target_properties(BOSSLazyTransformationEngine PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
-set_target_properties(BOSSLazyTransformationEngine PROPERTIES PUBLIC_HEADER ${PUBLIC_HEADER_LIST})
+# set_target_properties(BOSSLazyTransformationEngine PROPERTIES PUBLIC_HEADER ${PUBLIC_HEADER_LIST})
+set_property(TARGET BOSSLazyTransformationEngine PROPERTY PUBLIC_HEADER ${PUBLIC_HEADER_LIST})
 install(TARGETS BOSSLazyTransformationEngine LIBRARY DESTINATION lib)
 
 set_target_properties(LTTests PROPERTIES INSTALL_RPATH_USE_LINK_PATH TRUE)
