@@ -26,6 +26,7 @@ using std::vector;
 using namespace Catch::Matchers;
 using boss::engines::LazyTransformation::moveExctractedSelectExpressionToTransformation;
 using boss::engines::LazyTransformation::removeUnusedTransformationColumns;
+using boss::engines::LazyTransformation::replaceTransformSymbolsWithQuery;
 using boss::engines::LazyTransformation::utilities::buildColumnDependencies;
 using boss::engines::LazyTransformation::utilities::canMoveConditionThroughProjection;
 using boss::engines::LazyTransformation::utilities::getAllDependentSymbols;
@@ -326,53 +327,56 @@ TEST_CASE("Extract operators from select works correctly") {
   ComplexExpression transformationExpression = "Project"_(
       "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
       "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
-  boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
-
-  ComplexExpression simpleSelectExpression = "Select"_("Table"_(), "Where"_("Equal"_("A"_, 1)));
+  auto engine = boss::engines::LazyTransformation::Engine();
 
   std::vector<ComplexExpression> conditionsToMove = {};
-  std::unordered_set<boss::Symbol> projectionColumns = {};
+  std::unordered_map<boss::Symbol, std::unordered_set<boss::Symbol>> dependencyColumns = {};
+  std::unordered_set<boss::Symbol> usedColumns = {};
+  buildColumnDependencies(transformationExpression, dependencyColumns, usedColumns);
 
-  Expression updatedExpression =
-      engine.extractOperatorsFromSelect(std::move(simpleSelectExpression), conditionsToMove, projectionColumns);
+  SECTION("Simple case") {
+    ComplexExpression simpleSelectExpression = "Select"_("Table"_(), "Where"_("Equal"_("A"_, 1)));
+    Expression updatedExpression = engine.extractOperatorsFromSelect(std::move(simpleSelectExpression),
+                                                                     conditionsToMove, dependencyColumns, usedColumns);
 
-  CHECK(conditionsToMove.size() == 1);
-  CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
-  CHECK(updatedExpression == "Table"_());
-  CHECK(projectionColumns == std::unordered_set<boss::Symbol>{"A"_});
+    CHECK(conditionsToMove.size() == 1);
+    CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
+    CHECK(updatedExpression == "Table"_());
+    CHECK(usedColumns == std::unordered_set<boss::Symbol>{"A"_});
+  }
 
-  ComplexExpression complexSelectExpressionWithAndRemoval =
-      "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
-                "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("C"_, 9), "Greater"_("A"_, "D"_))));
+  SECTION("Complex case with And removal") {
+    ComplexExpression complexSelectExpressionWithAndRemoval = "Select"_(
+        "Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
+        "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("C"_, 9), "Greater"_("A"_, "D"_))));
 
-  conditionsToMove.clear();
-  projectionColumns.clear();
-  updatedExpression = engine.extractOperatorsFromSelect(std::move(complexSelectExpressionWithAndRemoval),
-                                                        conditionsToMove, projectionColumns);
-  CHECK(conditionsToMove.size() == 3);
-  CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
-  CHECK(conditionsToMove[1] == "Greater"_("B"_, "C"_));
-  CHECK(conditionsToMove[2] == "Equal"_("C"_, 9));
-  CHECK(updatedExpression ==
-        "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
-                  "Where"_("Greater"_("A"_, "D"_))));
-  CHECK(projectionColumns == std::unordered_set<boss::Symbol>{"A"_, "B"_, "C"_});
+    Expression updatedExpression = engine.extractOperatorsFromSelect(std::move(complexSelectExpressionWithAndRemoval),
+                                                                     conditionsToMove, dependencyColumns, usedColumns);
+    CHECK(conditionsToMove.size() == 3);
+    CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
+    CHECK(conditionsToMove[1] == "Greater"_("B"_, "C"_));
+    CHECK(conditionsToMove[2] == "Equal"_("C"_, 9));
+    CHECK(updatedExpression ==
+          "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
+                    "Where"_("Greater"_("A"_, "D"_))));
+    CHECK(usedColumns == std::unordered_set<boss::Symbol>{"A"_, "B"_, "C"_});
+  }
 
-  ComplexExpression complexSelectExpressionWithAndRemain =
-      "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
-                "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("D"_, 9), "Greater"_("A"_, "D"_))));
+  SECTION("Complex case with And remain") {
+    ComplexExpression complexSelectExpressionWithAndRemain = "Select"_(
+        "Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
+        "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_), "Equal"_("D"_, 9), "Greater"_("A"_, "D"_))));
 
-  conditionsToMove.clear();
-  projectionColumns.clear();
-  updatedExpression = engine.extractOperatorsFromSelect(std::move(complexSelectExpressionWithAndRemain),
-                                                        conditionsToMove, projectionColumns);
-  CHECK(conditionsToMove.size() == 2);
-  CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
-  CHECK(conditionsToMove[1] == "Greater"_("B"_, "C"_));
-  CHECK(updatedExpression ==
-        "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
-                  "Where"_("And"_("Equal"_("D"_, 9), "Greater"_("A"_, "D"_)))));
-  CHECK(projectionColumns == std::unordered_set<boss::Symbol>{"A"_, "B"_, "C"_});
+    Expression updatedExpression = engine.extractOperatorsFromSelect(std::move(complexSelectExpressionWithAndRemain),
+                                                                     conditionsToMove, dependencyColumns, usedColumns);
+    CHECK(conditionsToMove.size() == 2);
+    CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
+    CHECK(conditionsToMove[1] == "Greater"_("B"_, "C"_));
+    CHECK(updatedExpression ==
+          "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
+                    "Where"_("And"_("Equal"_("D"_, 9), "Greater"_("A"_, "D"_)))));
+    CHECK(usedColumns == std::unordered_set<boss::Symbol>{"A"_, "B"_, "C"_});
+  }
 }
 
 TEST_CASE("MoveExctractedSelectExpressionToTransformation works correctly") {
@@ -397,8 +401,9 @@ TEST_CASE("RemoveUnusedTransformationColumns works correctly") {
       "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
 
   std::unordered_set<boss::Symbol> usedSymbols = {"A"_, "B"_};
+  std::unordered_set<boss::Symbol> untouchableColumns = {};
   ComplexExpression updatedTransformationExpression =
-      removeUnusedTransformationColumns(std::move(transformationExpression), usedSymbols);
+      removeUnusedTransformationColumns(std::move(transformationExpression), usedSymbols, untouchableColumns);
   CHECK(updatedTransformationExpression ==
         "Project"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
                             "Column"_("C"_, "List"_(7, 8, 9))),
@@ -412,9 +417,10 @@ TEST_CASE("ReplaceTransformSymbolsWithQuery") {
 
   Expression userExpression = "Select"_("Transformation"_, "Where"_("Equal"_("A"_, 1)));
 
-  boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
+  auto engine = boss::engines::LazyTransformation::Engine();
 
-  Expression updatedUserExpression = engine.replaceTransformSymbolsWithQuery(std::move(userExpression));
+  Expression updatedUserExpression =
+      replaceTransformSymbolsWithQuery(std::move(userExpression), std::move(transformationExpression));
 
   CHECK(updatedUserExpression ==
         "Select"_("Project"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
@@ -423,14 +429,106 @@ TEST_CASE("ReplaceTransformSymbolsWithQuery") {
                   "Where"_("Equal"_("A"_, 1))));
 }
 
-TEST_CASE("Evaluate works correctly") {
-  ComplexExpression transformationExpression = "Project"_(
+TEST_CASE("AddTransformation works correctly") {
+  ComplexExpression transformationExpression = "AddTransformation"_("Project"_(
       "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
-      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
-  boss::engines::LazyTransformation::Engine engine(std::move(transformationExpression));
+      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+
+  auto engine = boss::engines::LazyTransformation::Engine();
+
+  Expression result = engine.evaluate(std::move(transformationExpression));
+  Expression expected = "Transformation added successfully"_;
+  CHECK(result == expected);
+}
+
+TEST_CASE("GetTransformation works correctly") {
+  ComplexExpression firstTransformation = "AddTransformation"_("Project"_(
+      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+
+  auto engine = boss::engines::LazyTransformation::Engine();
+
+  Expression result = engine.evaluate(std::move(firstTransformation));
+  Expression expected = "Transformation added successfully"_;
+  CHECK(result == expected);
+
+  Expression getTransformationExpression = "GetTransformation"_();
+  Expression transformation = engine.evaluate(std::move(getTransformationExpression));
+  CHECK(transformation == "Project"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                              "Column"_("C"_, "List"_(7, 8, 9))),
+                                     "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+
+  ComplexExpression secondTransformation = "AddTransformation"_("Project"_(
+      "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)), "Column"_("F"_, "List"_(7, 8, 9))),
+      "As"_("D"_, "D"_, "E"_, "E"_, "F"_, "F"_)));
+
+  result = engine.evaluate(std::move(secondTransformation));
+  CHECK(result == expected);
+
+  getTransformationExpression = "GetTransformation"_(1);
+  transformation = engine.evaluate(std::move(getTransformationExpression));
+  CHECK(transformation == "Project"_("Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)),
+                                              "Column"_("F"_, "List"_(7, 8, 9))),
+                                     "As"_("D"_, "D"_, "E"_, "E"_, "F"_, "F"_)));
+}
+
+TEST_CASE("RemoveTransformation works correctly") {
+  ComplexExpression addTransformationExpression = "AddTransformation"_("Project"_(
+      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+
+  auto engine = boss::engines::LazyTransformation::Engine();
+  Expression addedSuccessfully = "Transformation added successfully"_;
+  Expression removedSuccessfully = "Transformation removed successfully"_;
+
+  Expression outOfBounds = "Error"_("Transformation index out of bounds"_);
+
+  SECTION("Remove empty transformation") {
+    Expression removeTransformationExpression = "RemoveTransformation"_();
+    Expression removeResult = engine.evaluate(std::move(removeTransformationExpression));
+    CHECK(removeResult == removedSuccessfully);
+  }
+
+  Expression result = engine.evaluate(std::move(addTransformationExpression));
+  CHECK(result == addedSuccessfully);
+
+  SECTION("Incorrect remove case") {
+    Expression incorrectRemoveTransformationExpression = "RemoveTransformation"_(1);
+    Expression incorrectRemoveResult = engine.evaluate(std::move(incorrectRemoveTransformationExpression));
+
+    CHECK(incorrectRemoveResult == outOfBounds);
+  }
+
+  SECTION("Correct remove case with number") {
+    Expression removeTransformationExpression = "RemoveTransformation"_(0);
+    Expression removeResult = engine.evaluate(std::move(removeTransformationExpression));
+    CHECK(removeResult == removedSuccessfully);
+  }
+
+  SECTION("Correct remove case without number") {
+    Expression removeTransformationExpression = "RemoveTransformation"_();
+    Expression removeResult = engine.evaluate(std::move(removeTransformationExpression));
+    CHECK(removeResult == removedSuccessfully);
+  }
+
+  SECTION("Remove all") {
+    Expression removeTransformationExpression = "RemoveAllTransformations"_();
+    Expression removeResult = engine.evaluate(std::move(removeTransformationExpression));
+    Expression expected = "All transformations removed successfully"_;
+    CHECK(removeResult == expected);
+  }
+}
+
+TEST_CASE("Evaluate works correctly") {
+  ComplexExpression transformationExpression = "AddTransformation"_("Project"_(
+      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+  auto engine = boss::engines::LazyTransformation::Engine();
+  engine.evaluate(std::move(transformationExpression));
+
   SECTION("Simple case") {
-    Expression userExpression =
-        "Select"_("Transformation"_, "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_))));
+    Expression userExpression = "ApplyTransformation"_(
+        "Select"_("Transformation"_, "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_)))));
     Expression updatedUserExpression = engine.evaluate(std::move(userExpression));
 
     CHECK(updatedUserExpression ==
@@ -441,12 +539,12 @@ TEST_CASE("Evaluate works correctly") {
   }
 
   SECTION("Complex case") {
-    Expression userExpression =
+    Expression userExpression = "ApplyTransformation"_(
         "Select"_("Select"_("Project"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
                                                 "Column"_("C"_, "List"_(7, 8, 9))),
                                        "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)),
                             "Where"_("And"_("Greater"_("A"_, 2), "Greater"_("B"_, "C"_)))),
-                  "Where"_("Equal"_("A"_, 8)));
+                  "Where"_("Equal"_("A"_, 8))));
     Expression updatedUserExpression = engine.evaluate(std::move(userExpression));
 
     CHECK(updatedUserExpression ==

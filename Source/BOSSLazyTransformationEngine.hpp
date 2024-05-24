@@ -16,14 +16,18 @@ ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpressi
                                                                  ComplexExpression &&extractedExpressions);
 
 ComplexExpression removeUnusedTransformationColumns(ComplexExpression &&transformationQuery,
-                                                    const std::unordered_set<Symbol> &usedSymbols);
+                                                    const std::unordered_set<Symbol> &usedSymbols,
+                                                    const std::unordered_set<Symbol> &untouchableColumns);
+
+Expression replaceTransformSymbolsWithQuery(Expression &&expr, Expression &&transformationQuery);
 
 class Engine {
  private:
-  ComplexExpression permanentTransformationQuery;
-  ComplexExpression changingTransformationQuery;
-  std::unordered_set<Symbol> untouchableColumns;
-  std::unordered_map<Symbol, std::unordered_set<Symbol>> transformationColumnsDependencies;
+  std::vector<ComplexExpression> transformationQueries;
+  std::vector<std::unordered_set<Symbol>> transformationsUntouchableColumns;
+  std::vector<std::unordered_map<Symbol, std::unordered_set<Symbol>>> transformationsColumnDependencies;
+
+  std::optional<ComplexExpression> currentTransformationQuery;
 
  public:
   // Engien is not copyable
@@ -38,21 +42,23 @@ class Engine {
   // Engine is not copyable
   Engine &operator=(Engine &&) = delete;
 
-  // Constructor with transformation query
-  Engine(boss::ComplexExpression &&transformationQuery);
+  // Default constructor
+  Engine() = default;
 
   // Default destructor
   ~Engine() = default;
 
-  Expression extractOperatorsFromSelect(ComplexExpression &&expr, std::vector<ComplexExpression> &conditionsToMove,
-                                        std::unordered_set<Symbol> &projectionColumns);
+  Expression extractOperatorsFromSelect(
+      ComplexExpression &&expr, std::vector<ComplexExpression> &conditionsToMove,
+      std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumnsDependencies,
+      std::unordered_set<Symbol> &usedSymbols);
+
   void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols,
                                      bool addAll = false);
-  void extractOperatorsFromTop(const ComplexExpression &expr);
 
-  Expression replaceTransformSymbolsWithQuery(Expression &&expr);
-
-  Expression processExpression(Expression &&inputExpr, std::unordered_set<Symbol> &usedSymbols);
+  Expression processExpression(
+      Expression &&inputExpr, std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumnsDependencies,
+      std::unordered_set<Symbol> &usedSymbols);
 
   boss::Expression evaluate(boss::Expression &&e);
 };
