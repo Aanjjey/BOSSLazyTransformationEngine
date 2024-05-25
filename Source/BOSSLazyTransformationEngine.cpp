@@ -77,8 +77,7 @@ Expression Engine::extractOperatorsFromSelect(
         return boss::Expression(std::move(newSelect));
       } else {
         auto newAnd = boss::ComplexExpression(std::move(andHead), {}, {std::move(remainingSubconditions)}, {});
-        auto newWhere =
-            boss::ComplexExpression(std::move(whereHead), {}, boss::ExpressionArguments(std::move(newAnd)), {});
+        auto newWhere = boss::ComplexExpression(std::move(whereHead), {}, boss::ExpressionArguments(std::move(newAnd)), {});
         auto newSelect = boss::ComplexExpression(
             std::move(selectHead), {}, boss::ExpressionArguments(std::move(processedInput), std::move(newWhere)), {});
         return boss::Expression(std::move(newSelect));
@@ -148,8 +147,7 @@ ComplexExpression removeUnusedTransformationColumns(ComplexExpression&& transfor
       }
       if (std::holds_alternative<Symbol>(arg)) {
         Symbol symbol = std::get<Symbol>(std::move(arg));
-        if (usedSymbols.find(symbol) != usedSymbols.end() ||
-            untouchableColumns.find(symbol) != untouchableColumns.end()) {
+        if (usedSymbols.find(symbol) != usedSymbols.end() || untouchableColumns.find(symbol) != untouchableColumns.end()) {
           newProjectionArguments.emplace_back(std::move(symbol));
         } else {
           removeNext = true;
@@ -164,7 +162,7 @@ ComplexExpression removeUnusedTransformationColumns(ComplexExpression&& transfor
     return boss::ComplexExpression(
         std::move(head), std::move(statics),
         boss::ExpressionArguments(std::move(newProjectInput), std::move(newProjectionAsExpr)), std::move(spans));
-  } else {  // TODO: think if need to add "Column"_ removal
+  } else {
     auto [head, statics, dynamics, spans] = std::move(transformationQuery).decompose();
     for (auto it = std::make_move_iterator(dynamics.begin()); it != std::make_move_iterator(dynamics.end());) {
       if (std::holds_alternative<ComplexExpression>(*it)) {
@@ -258,7 +256,12 @@ Expression Engine::processExpression(
           [](auto&& otherExpr) -> Expression { return std::forward<decltype(otherExpr)>(otherExpr); }),
       std::move(inputExpr));
 }
-
+// TODO:
+// ! 1. Add support for other operators: extraction from Join. Propagation through Join, Order, Group, etc.
+// ! 2. Add support for the extraction of OR operator
+// ! 3. Add memoization
+// ! 4. Evaluate existing code
+// ? 5. Speak with Holger?
 Expression Engine::evaluate(Expression&& expr) {
   return std::visit(
       boss::utilities::overload(
@@ -277,21 +280,18 @@ Expression Engine::evaluate(Expression&& expr) {
               }
               currentTransformationQuery.emplace(
                   transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
-              std::unordered_set<Symbol> currentUntouchableColumns = transformationsUntouchableColumns[index];
-              std::unordered_map<Symbol, std::unordered_set<Symbol>> currentColumnDependencies =
-                  transformationsColumnDependencies[index];
+              auto currentUntouchableColumns = transformationsUntouchableColumns[index];
+              auto currentColumnDependencies = transformationsColumnDependencies[index];
 
               ComplexExpression complexExpr = std::get<ComplexExpression>(std::move(dynamics[0]));
               std::unordered_set<Symbol> usedSymbols = {};
 
               Expression result = processExpression(std::move(complexExpr), currentColumnDependencies, usedSymbols);
-              std::unordered_set<Symbol> allUsedSymbols =
-                  utilities::getAllDependentSymbols(currentColumnDependencies, usedSymbols);
+              auto allUsedSymbols = utilities::getAllDependentSymbols(currentColumnDependencies, usedSymbols);
               result = removeUnusedTransformationColumns(std::move(currentTransformationQuery.value()), allUsedSymbols,
                                                          currentUntouchableColumns);
 
-              result =
-                  replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery.value()));
+              result = replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery.value()));
 
               return std::move(result);
             } else if (head == "AddTransformation"_) {
@@ -344,7 +344,7 @@ Expression Engine::evaluate(Expression&& expr) {
               transformationsColumnDependencies.clear();
 
               return "All transformations removed successfully"_;
-            } else if (head == "GetEngineCapabilities"_) {
+            } else if (head == "GetLazyTransformationEngineCapabilities"_) {
               return "List"_("ApplyTransformation"_, "AddTransformation"_, "GetTransformation"_,
                              "RemoveTransformation"_, "RemoveAllTransformations"_);
             }
@@ -389,13 +389,10 @@ static std::string expressionToString(Expression&& expr) {
 //     id;
 // }
 
-// TODO: Check if this is the correct way to handle the engine
 static auto& enginePtr(bool initialise = true) {
-  // TODO: Engine need to be initialised with the transformation query
   static auto engine = std::unique_ptr<boss::engines::LazyTransformation::Engine>();
   if (!engine && initialise) {
-    //  TODO: Uncomment this line when the transformation query is ready
-    // engine.reset(new boss::engines::LazyTransformation::Engine());
+    engine.reset(new boss::engines::LazyTransformation::Engine());
   }
   return engine;
 }

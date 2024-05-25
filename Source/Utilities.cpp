@@ -25,9 +25,7 @@ using boss::Expression;
 namespace boss::engines::LazyTransformation::utilities {
 
 bool isCardinalityReducingOperator(const Symbol& op) {
-  static const std::unordered_set<Symbol> cardinalityReducingOps = {
-      "Select"_, "Project"_  //, "Top"_, //"Group"_
-  };
+  static const std::unordered_set<Symbol> cardinalityReducingOps = {"Select"_, "Project"_};
   return cardinalityReducingOps.find(op) != cardinalityReducingOps.end();
 }
 
@@ -100,8 +98,7 @@ std::unordered_set<Symbol> getUsedTransformationColumns(
     std::unordered_set<Symbol> usedSymbols = {};
     for (const auto& arg : complexExpr.getDynamicArguments()) {
       auto subUsedSymbols = getUsedTransformationColumns(arg, transformationColumns);
-      usedSymbols.insert(std::make_move_iterator(subUsedSymbols.begin()),
-                         std::make_move_iterator(subUsedSymbols.end()));
+      usedSymbols.insert(std::make_move_iterator(subUsedSymbols.begin()), std::make_move_iterator(subUsedSymbols.end()));
     }
     return usedSymbols;
   } else if (std::holds_alternative<Symbol>(expr)) {

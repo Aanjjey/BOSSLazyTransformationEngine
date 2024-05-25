@@ -168,8 +168,7 @@ TEST_CASE("GetAllDependentSymbols works correctly", "[utilities]") {
       {"A"_, {"D"_}}, {"B"_, {"C"_}}, {"C"_, {}}, {"D"_, {"E"_}}, {"E"_, {"F"_}}, {"H"_, {}}, {"K"_, {}}, {"L"_, {}}};
 
   std::unordered_set<boss::Symbol> usedSymbols = {"A"_, "B"_};
-  std::unordered_set<boss::Symbol> dependentSymbols =
-      getAllDependentSymbols(transformationColumnsDependencies, usedSymbols);
+  std::unordered_set<boss::Symbol> dependentSymbols = getAllDependentSymbols(transformationColumnsDependencies, usedSymbols);
   CHECK(dependentSymbols == std::unordered_set<boss::Symbol>{"A"_, "B"_, "C"_, "D"_, "E"_, "F"_});
 }
 
