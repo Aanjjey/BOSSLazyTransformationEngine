@@ -23,7 +23,7 @@ using boss::Expression;
 
 namespace boss::engines::LazyTransformation {
 
-// ---------------------------- SELECTION RELATED OPERATIONS START ----------------------------
+// ---------------------------- EXPRESSION EXTRACTION RELATED OPERATIONS START ----------------------------
 // TODO: Add subprocessing for the nested expressions
 Expression Engine::extractOperatorsFromSelect(
     ComplexExpression&& expr, std::vector<ComplexExpression>& conditionsToMove,
@@ -87,11 +87,11 @@ Expression Engine::extractOperatorsFromSelect(
   // Compose and return the original expression in case if the condition is not extractable
   auto oldWhere =
       boss::ComplexExpression(std::move(whereHead), {}, boss::ExpressionArguments(std::move(conditionExpression)), {});
-  auto oldSelect = boss::ComplexExpression(
-      std::move(selectHead), {}, boss::ExpressionArguments(std::move(processedInput), std::move(oldWhere)), {});
+  auto oldSelect = boss::ComplexExpression(std::move(selectHead), {},
+                                           boss::ExpressionArguments(std::move(processedInput), std::move(oldWhere)), {});
   return boss::Expression(std::move(oldSelect));
 }
-// ---------------------------- SELECTION RELATED OPERATIONS START ----------------------------
+// ---------------------------- EXPRESSION EXTRACTION RELATED OPERATIONS START ----------------------------
 
 // ---------------------------- EXPRESSION PROPAGATION RELATED OPERATIONS START ----------------------------
 
@@ -120,6 +120,9 @@ ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpressi
                                      boss::ExpressionArguments(std::move(newProjectInput), std::move(dynamics[1])),
                                      std::move(spans));
     }
+  }
+  if (transformingExpression.getHead() == "Group"_ || transformingExpression.getHead() == "GroupBy"_ ||
+      transformingExpression.getHead() == "Order"_ || transformingExpression.getHead() == "OrderBy"_) {
   }
   // TODO: Add support for other operators: Join, Group, etc.
   // Encapsulate the transformingExpression into the new select

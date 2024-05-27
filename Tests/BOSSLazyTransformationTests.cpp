@@ -331,7 +331,8 @@ TEST_CASE("Extract operators from select works correctly") {
   std::vector<ComplexExpression> conditionsToMove = {};
   std::unordered_map<boss::Symbol, std::unordered_set<boss::Symbol>> dependencyColumns = {};
   std::unordered_set<boss::Symbol> usedColumns = {};
-  buildColumnDependencies(transformationExpression, dependencyColumns, usedColumns);
+  std::unordered_set<boss::Symbol> untouchableColumns = {};
+  buildColumnDependencies(transformationExpression, dependencyColumns, untouchableColumns);
 
   SECTION("Simple case") {
     ComplexExpression simpleSelectExpression = "Select"_("Table"_(), "Where"_("Equal"_("A"_, 1)));
