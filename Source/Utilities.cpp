@@ -142,32 +142,48 @@ std::unordered_set<Symbol> getAllDependentSymbols(
 
 bool canMoveConditionThroughProjection(const ComplexExpression& projectionOperator,
                                        const ComplexExpression& extractedCondition) {
+  std::unordered_set<Symbol> extractedConditionSymbols = {};
+  for (const auto& arg : extractedCondition.getDynamicArguments()) {
+    utilities::getUsedSymbolsFromExpressions(arg, extractedConditionSymbols);
+  }
+  return canMoveConditionThroughProjection(projectionOperator, extractedCondition, extractedConditionSymbols);
+}
+
+bool canMoveConditionThroughProjection(const ComplexExpression& projectionOperator,
+                                       const ComplexExpression& extractedCondition,
+                                       const std::unordered_set<Symbol>& extractedConditionSymbols) {
   const auto& projectionDynamics = projectionOperator.getDynamicArguments();
   const auto& projectionAsFunction = std::get<ComplexExpression>(projectionDynamics[1]);
-  std::unordered_set<Symbol> usedSymbols = {};
-  for (const auto& arg : extractedCondition.getDynamicArguments()) {
-    utilities::getUsedSymbolsFromExpressions(arg, usedSymbols);
-  }
-  bool transformationColumn = false;
+  bool resultColumn = true;  // Result column is every the output name column
   bool isSymbolUsedInCondition = false;
   Symbol currentSymbol = Symbol("Symbol");
-
   for (const auto& arg : projectionAsFunction.getDynamicArguments()) {
-    if (!transformationColumn) {
+    if (resultColumn) {
       currentSymbol = std::get<Symbol>(arg);
-      if (usedSymbols.find(currentSymbol) != usedSymbols.end()) {
+      if (extractedConditionSymbols.find(currentSymbol) != extractedConditionSymbols.end()) {
         isSymbolUsedInCondition = true;
       } else {
         isSymbolUsedInCondition = false;
       }
-      transformationColumn = true;
+      resultColumn = true;
     } else {
+      if (!std::holds_alternative<Symbol>(arg)) {
+        std::unordered_set<Symbol> usedSymbols = {};
+        utilities::getUsedSymbolsFromExpressions(arg, usedSymbols);
+        for (const auto& symbol : extractedConditionSymbols) {
+          if (usedSymbols.find(symbol) != usedSymbols.end()) {
+            // The logic is the following: If the extracted condition symbol is used to generate some results, then
+            // altering (filtering) the symbol  will alter the results. Therefore, can't be moved
+            return false;
+          }
+        }
+      }
       if (isSymbolUsedInCondition) {
         if (!utilities::isOperationReversible(arg)) {
           return false;
         }
       }
-      transformationColumn = false;
+      resultColumn = false;
     }
   }
   return true;

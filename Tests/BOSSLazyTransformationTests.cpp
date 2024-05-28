@@ -380,19 +380,116 @@ TEST_CASE("Extract operators from select works correctly") {
 }
 
 TEST_CASE("MoveExctractedSelectExpressionToTransformation works correctly") {
-  ComplexExpression transformationExpression = "Project"_(
-      "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
-      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
+  SECTION("Projection case") {
+    ComplexExpression projectTransformationExpression = "Project"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
 
-  ComplexExpression simpleEqualExpression = "Equal"_("A"_, 1);
+    ComplexExpression simpleEqualExpression = "Equal"_("A"_, 1);
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_};
 
-  ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
-      std::move(transformationExpression), std::move(simpleEqualExpression));
-  CHECK(updatedTransformationExpression ==
-        "Project"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(projectTransformationExpression), std::move(simpleEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Project"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                        "Column"_("C"_, "List"_(7, 8, 9))),
+                               "Where"_("Equal"_("A"_, 1))),
+                     "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+  }
+
+  SECTION("Propagate through Grouped case") {
+    ComplexExpression groupedTransformationExpression = "Group"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "By"_("A"_, "B"_, "C"_), "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_));
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_, "B"_, "C"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(groupedTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Group"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
                                       "Column"_("C"_, "List"_(7, 8, 9))),
-                             "Where"_("Equal"_("A"_, 1))),
-                   "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+                             "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_)))),
+                   "By"_("A"_, "B"_, "C"_), "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
+  }
+
+  SECTION("Doesn't propagate through Grouped case") {
+    ComplexExpression groupedTransformationExpression = "Group"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("D"_, "List"_(7, 8, 9))),
+        "By"_("A"_, "B"_, "C"_), "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("A"_, 1), "Greater"_("D"_, 3));
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_, "D"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(groupedTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Select"_("Group"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                      "Column"_("D"_, "List"_(7, 8, 9))),
+                             "By"_("A"_, "B"_, "C"_), "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)),
+                    "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("D"_, 3)))));
+  }
+
+  SECTION("Propagate through Join first input") {
+    ComplexExpression joinTransformationExpression = "Join"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)), "Column"_("F"_, "List"_(7, 8, 9))),
+        "Where"_("Equal"_("A"_, "D"_)));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_));
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_, "B"_, "C"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(joinTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Join"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                     "Column"_("C"_, "List"_(7, 8, 9))),
+                            "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_)))),
+                  "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)),
+                           "Column"_("F"_, "List"_(7, 8, 9))),
+                  "Where"_("Equal"_("A"_, "D"_))));
+  }
+
+  SECTION("Propagate through Join second input") {
+    ComplexExpression joinTransformationExpression = "Join"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)), "Column"_("F"_, "List"_(7, 8, 9))),
+        "Where"_("Equal"_("A"_, "D"_)));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("D"_, 1), "Greater"_("E"_, "F"_));
+    std::unordered_set<boss::Symbol> usedColumns = {"D"_, "E"_, "F"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(joinTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Join"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                           "Column"_("C"_, "List"_(7, 8, 9))),
+                  "Select"_("Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)),
+                                     "Column"_("F"_, "List"_(7, 8, 9))),
+                            "Where"_("And"_("Equal"_("D"_, 1), "Greater"_("E"_, "F"_)))),
+                  "Where"_("Equal"_("A"_, "D"_))));
+  }
+
+  SECTION("Doesn't propagate through Join case") {
+    ComplexExpression joinTransformationExpression = "Join"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)), "Column"_("F"_, "List"_(7, 8, 9))),
+        "Where"_("Equal"_("A"_, "D"_)));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("A"_, 1), "Greater"_("D"_, 3));
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_, "D"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(joinTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Select"_("Join"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                     "Column"_("C"_, "List"_(7, 8, 9))),
+                            "Table"_("Column"_("D"_, "List"_(1, 2, 3)), "Column"_("E"_, "List"_(4, 5, 6)),
+                                     "Column"_("F"_, "List"_(7, 8, 9))),
+                            "Where"_("Equal"_("A"_, "D"_))),
+                    "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("D"_, 3)))));
+  }
 }
 
 TEST_CASE("RemoveUnusedTransformationColumns works correctly") {

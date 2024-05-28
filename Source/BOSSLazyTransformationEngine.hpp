@@ -13,7 +13,8 @@ namespace boss::engines::LazyTransformation {
 static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
 
 ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression &&transformingExpression,
-                                                                 ComplexExpression &&extractedExpressions);
+                                                                 ComplexExpression &&extractedExpressions,
+                                                                 const std::unordered_set<Symbol> &usedSymbols);
 
 ComplexExpression removeUnusedTransformationColumns(ComplexExpression &&transformationQuery,
                                                     const std::unordered_set<Symbol> &usedSymbols,

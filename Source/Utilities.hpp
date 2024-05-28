@@ -40,6 +40,10 @@ std::unordered_set<Symbol> getAllDependentSymbols(
 bool canMoveConditionThroughProjection(const ComplexExpression &projectionOperator,
                                        const ComplexExpression &extractedCondition);
 
+bool canMoveConditionThroughProjection(const ComplexExpression &projectionOperator,
+                                       const ComplexExpression &extractedCondition,
+                                       const std::unordered_set<Symbol> &extractedConditionSymbols);
+
 bool isOperationReversible(const Expression &expr);
 
 void buildColumnDependencies(const ComplexExpression &expr,
