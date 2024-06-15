@@ -8,9 +8,17 @@
 #include <utility>
 #include <vector>
 
+using std::string_literals::operator""s;
+using boss::ComplexExpression;
+using boss::Span;
+using boss::Symbol;
+
+using boss::Expression;  // NOLINT(misc-unused-using-decls)
+
 namespace boss::engines::LazyTransformation {
 
 static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
+static ComplexExpression UNEXCTRACTABLE_EXPRESSION = ComplexExpression(UNEXCTRACTABLE, {}, {}, {});
 
 ComplexExpression moveExctractedSelectExpressionToTransformation(Expression &&transformingExpression,
                                                                  ComplexExpression &&extractedExpressions,
@@ -27,11 +35,12 @@ class Engine {
   std::vector<ComplexExpression> transformationQueries;
   std::vector<std::unordered_set<Symbol>> transformationsUntouchableColumns;
   std::vector<std::unordered_map<Symbol, std::unordered_set<Symbol>>> transformationsColumnDependencies;
-  std::unordered_map<Expression, Expression> transformationCache;
-  bool isTransformationCacheEnabled = false;
-  bool cacheCurrentTransformationQuery = false;
+  //   std::unordered_map<Expression, Expression> transformationCache;
+  //   bool isTransformationCacheEnabled = false;
+  //   bool cacheCurrentTransformationQuery = false;
 
   std::optional<ComplexExpression> currentTransformationQuery;
+  ComplexExpression currentTransformationQuery1 = UNEXCTRACTABLE_EXPRESSION.clone();
 
  public:
   // Engien is not copyable

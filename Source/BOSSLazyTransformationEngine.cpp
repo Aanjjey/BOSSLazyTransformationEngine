@@ -389,8 +389,10 @@ Expression Engine::processExpression(
                 for (const auto& arg : extractedExpr.getDynamicArguments()) {
                   utilities::getUsedSymbolsFromExpressions(arg, extractedExprSymbols);
                 }
-                currentTransformationQuery.emplace(moveExctractedSelectExpressionToTransformation(
-                    std::move(currentTransformationQuery.value()), std::move(extractedExpr), extractedExprSymbols));
+                currentTransformationQuery1 = std::move(moveExctractedSelectExpressionToTransformation(
+                    std::move(currentTransformationQuery1), std::move(extractedExpr), extractedExprSymbols));
+                // currentTransformationQuery.emplace(moveExctractedSelectExpressionToTransformation(
+                //     std::move(currentTransformationQuery.value()), std::move(extractedExpr), extractedExprSymbols));
               }
               return std::move(expression);
             } else if (complexExpr.getHead() == "Project"_) {
@@ -477,8 +479,10 @@ Expression Engine::evaluate(Expression&& expr) {
               //     this->transformationCache.emplace(std::move(placeholder), std::move(dynamics[0].clone()));
               //   }
               // }
-              currentTransformationQuery.emplace(
-                  transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
+              currentTransformationQuery1 =
+                  std::move(transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
+              // currentTransformationQuery.emplace(
+              //     transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
               auto currentUntouchableColumns = transformationsUntouchableColumns[index];
               auto currentColumnDependencies = transformationsColumnDependencies[index];
 
@@ -491,10 +495,13 @@ Expression Engine::evaluate(Expression&& expr) {
               for (const auto& symbol : usedSymbols) {
                 printf("%s, ", symbol.getName().c_str());
               }
-              currentTransformationQuery.emplace(removeUnusedTransformationColumns(
-                  std::move(currentTransformationQuery.value()), allUsedSymbols, currentUntouchableColumns));
+              currentTransformationQuery1 = std::move(removeUnusedTransformationColumns(
+                  std::move(currentTransformationQuery1), allUsedSymbols, currentUntouchableColumns));
+              // currentTransformationQuery.emplace(removeUnusedTransformationColumns(
+              //     std::move(currentTransformationQuery.value()), allUsedSymbols, currentUntouchableColumns));
 
-              result = replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery.value()));
+              // result = replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery.value()));
+              result = replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery1));
 
               return std::move(result);
             } else if (head == "AddTransformation"_) {
