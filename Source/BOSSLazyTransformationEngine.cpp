@@ -56,6 +56,7 @@ Expression Engine::extractOperatorsFromSelect(
     // If the condition is a complex condition, we need to check each subcondition
     for (auto& andSubcondition : andDynamics) {
       auto subConditionExpr = std::get<ComplexExpression>(std::move(andSubcondition));
+      printf("Head is %s\n", subConditionExpr.getHead().getName().c_str());
       if (utilities::isConditionMoveable(subConditionExpr, transformationColumnsDependencies, usedSymbols)) {
         conditionsToMove.emplace_back(std::move(subConditionExpr));
       } else {
@@ -91,157 +92,226 @@ Expression Engine::extractOperatorsFromSelect(
                                            boss::ExpressionArguments(std::move(processedInput), std::move(oldWhere)), {});
   return boss::Expression(std::move(oldSelect));
 }
-// ---------------------------- EXPRESSION EXTRACTION RELATED OPERATIONS START ----------------------------
+// ---------------------------- EXPRESSION EXTRACTION RELATED OPERATIONS END ----------------------------
 
 // ---------------------------- EXPRESSION PROPAGATION RELATED OPERATIONS START ----------------------------
 
-ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression&& transformingExpression,
+// TODO: Add Union, Except, Intersect
+ComplexExpression moveExctractedSelectExpressionToTransformation(Expression&& expression,
                                                                  ComplexExpression&& extractedExpression,
                                                                  const std::unordered_set<Symbol>& extractedExprSymbols) {
-  if (transformingExpression.getHead() == "Select"_) {
-    // Push through the SELECT operator
-    auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-    auto selectInput = std::get<ComplexExpression>(std::move(dynamics[0]));
-    auto newSelectInput = moveExctractedSelectExpressionToTransformation(
-        std::move(selectInput), std::move(extractedExpression), extractedExprSymbols);
-    auto newTransformingExpression =
-        boss::ComplexExpression(std::move(head), std::move(statics),
-                                boss::ExpressionArguments(std::move(newSelectInput), std::move(dynamics[1])), {});
-    return std::move(utilities::mergeConsecutiveSelectOperators(std::move(newTransformingExpression)));
-    // For the Table or Column we can't propagate further, so add it to the WHERE operator
-  } else if (transformingExpression.getHead() == "Project"_) {
-    // Push through the PROJECT operator if the condition can be moved through the projection
-    if (utilities::canMoveConditionThroughProjection(transformingExpression, extractedExpression, extractedExprSymbols)) {
+  if (std::holds_alternative<ComplexExpression>(expression)) {
+    auto transformingExpression = std::get<ComplexExpression>(std::move(expression));
+    if (transformingExpression.getHead() == "Select"_) {
+      // Push through the SELECT operator
       auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-      auto projectInput = std::get<ComplexExpression>(std::move(dynamics[0]));
-      // TODO: Need to modify the projection function and the extractedExpression
-      auto newProjectInput = moveExctractedSelectExpressionToTransformation(
-          std::move(projectInput), std::move(extractedExpression), extractedExprSymbols);
+      auto selectInput = std::move(dynamics[0]);
+      auto newSelectInput = moveExctractedSelectExpressionToTransformation(
+          std::move(selectInput), std::move(extractedExpression), extractedExprSymbols);
+      auto newTransformingExpression =
+          boss::ComplexExpression(std::move(head), std::move(statics),
+                                  boss::ExpressionArguments(std::move(newSelectInput), std::move(dynamics[1])), {});
+      return std::move(utilities::mergeConsecutiveSelectOperators(std::move(newTransformingExpression)));
+      // For the Table or Column we can't propagate further, so add it to the WHERE operator
+    } else if (transformingExpression.getHead() == "Project"_) {
+      // Push through the PROJECT operator if the condition can be moved through the projection
+      if (utilities::canMoveConditionThroughProjection(transformingExpression, extractedExpression, extractedExprSymbols)) {
+        auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
+        auto projectInput = std::move(dynamics[0]);
+        // TODO: Need to modify the projection function and the extractedExpression
+        auto newProjectInput = moveExctractedSelectExpressionToTransformation(
+            std::move(projectInput), std::move(extractedExpression), extractedExprSymbols);
+        return boss::ComplexExpression(std::move(head), std::move(statics),
+                                       boss::ExpressionArguments(std::move(newProjectInput), std::move(dynamics[1])),
+                                       std::move(spans));
+      }
+    } else if (transformingExpression.getHead() == "Sort"_ || transformingExpression.getHead() == "SortBy"_ ||
+               transformingExpression.getHead() == "Order"_ || transformingExpression.getHead() == "OrderBy"_) {
+      // Can safely push through Sort and Order as filtering rows doesn't change the order
+      auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
+      auto expressionInput = std::move(dynamics[0]);
+      auto newExpressionInput = moveExctractedSelectExpressionToTransformation(
+          std::move(expressionInput), std::move(extractedExpression), extractedExprSymbols);
       return boss::ComplexExpression(std::move(head), std::move(statics),
-                                     boss::ExpressionArguments(std::move(newProjectInput), std::move(dynamics[1])),
+                                     boss::ExpressionArguments(std::move(newExpressionInput), std::move(dynamics[1])),
                                      std::move(spans));
-    }
-  } else if (transformingExpression.getHead() == "Sort"_ || transformingExpression.getHead() == "SortBy"_ ||
-             transformingExpression.getHead() == "Order"_ || transformingExpression.getHead() == "OrderBy"_) {
-    // Can safely push through Sort and Order as filtering rows doesn't change the order
-    auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-    auto expressionInput = std::get<ComplexExpression>(std::move(dynamics[0]));
-    auto newExpressionInput = moveExctractedSelectExpressionToTransformation(
-        std::move(expressionInput), std::move(extractedExpression), extractedExprSymbols);
-    return boss::ComplexExpression(std::move(head), std::move(statics),
-                                   boss::ExpressionArguments(std::move(newExpressionInput), std::move(dynamics[1])),
-                                   std::move(spans));
 
-  } else if (transformingExpression.getHead() == "Group"_ || transformingExpression.getHead() == "GroupBy"_) {
-    // Can push through Group only when the condition is on the grouped column, otherwise grouping result will change
-    const auto& constDynamics = transformingExpression.getDynamicArguments();
-    const auto& groupByExpression = constDynamics[1];
-    // Sometimes Group operator only has the aggregated columns, missing the By. Can't push through it in that case
-    if (std::get<ComplexExpression>(groupByExpression).getHead() == "By"_) {
-      std::unordered_set<Symbol> groupingColumns = {};
-      utilities::getUsedSymbolsFromExpressions(groupByExpression, groupingColumns);
-      bool canPushThrough = true;
+    } else if (transformingExpression.getHead() == "Group"_ || transformingExpression.getHead() == "GroupBy"_) {
+      // Can push through Group only when the condition is on the grouped column, otherwise grouping result will change
+      const auto& constDynamics = transformingExpression.getDynamicArguments();
+      const auto& groupByExpression = constDynamics[1];
+      // Sometimes Group operator only has the aggregated columns, missing the By. Can't push through it in that case
+      if (std::get<ComplexExpression>(groupByExpression).getHead() == "By"_) {
+        std::unordered_set<Symbol> groupingColumns = {};
+        utilities::getUsedSymbolsFromExpressions(groupByExpression, groupingColumns);
+        bool canPushThrough = true;
+        for (const auto& symbol : extractedExprSymbols) {
+          if (groupingColumns.find(symbol) == groupingColumns.end()) {
+            canPushThrough = false;
+            break;
+          }
+        }
+        if (canPushThrough) {
+          auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
+          auto expressionInput = std::move(dynamics[0]);
+          auto newExpressionInput = moveExctractedSelectExpressionToTransformation(
+              std::move(expressionInput), std::move(extractedExpression), extractedExprSymbols);
+          ExpressionArguments newGroupByArguments = {};
+          newGroupByArguments.emplace_back(std::move(newExpressionInput));
+          newGroupByArguments.emplace_back(std::move(dynamics[1]));
+          if (dynamics.size() == 3) {
+            newGroupByArguments.emplace_back(std::move(dynamics[2]));
+          }
+          return boss::ComplexExpression(std::move(head), std::move(statics), std::move(newGroupByArguments),
+                                         std::move(spans));
+        }
+      }
+      // If cannot move through the Group operator, drop to the base case to wrap it with the SELECT operator
+    } else if (transformingExpression.getHead() == "Join"_) {
+      // Can push through if the condition is only on one of the Join inputs
+      const auto& constDynamics = transformingExpression.getDynamicArguments();
+
+      const auto& joinInput1 = constDynamics[0];
+      std::unordered_set<Symbol> joinInput1Columns = {};
+      utilities::getUsedSymbolsFromExpressions(joinInput1, joinInput1Columns);
+
+      const auto& joinInput2 = constDynamics[1];
+      std::unordered_set<Symbol> joinInput2Columns = {};
+      utilities::getUsedSymbolsFromExpressions(joinInput2, joinInput2Columns);
+
+      bool canPushThrough1 = true;
+      bool canPushThrough2 = true;
+      bool isInFirstInput = false;
+      bool isInSecondInput = false;
+
+      // Check if the condition is only on the first input of the Join operator
       for (const auto& symbol : extractedExprSymbols) {
-        if (groupingColumns.find(symbol) == groupingColumns.end()) {
-          canPushThrough = false;
+        isInFirstInput = joinInput1Columns.find(symbol) != joinInput1Columns.end();
+        isInSecondInput = joinInput2Columns.find(symbol) != joinInput2Columns.end();
+
+        // If simultaneously in both inputs, can't push through
+        if (isInFirstInput && isInSecondInput) {
+          canPushThrough1 = false;
+          canPushThrough2 = false;
+          break;
+        }
+        if (!isInFirstInput) {
+          canPushThrough1 = false;
+        }
+        if (!isInSecondInput) {
+          canPushThrough2 = false;
+        }
+        if (!canPushThrough1 && !canPushThrough2) {
           break;
         }
       }
-      if (canPushThrough) {
+
+      // Check that they are not both true or both false
+      if (canPushThrough1 != canPushThrough2) {
         auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-        auto expressionInput = std::get<ComplexExpression>(std::move(dynamics[0]));
-        auto newExpressionInput = moveExctractedSelectExpressionToTransformation(
-            std::move(expressionInput), std::move(extractedExpression), extractedExprSymbols);
-        ExpressionArguments newGroupByArguments = {};
-        newGroupByArguments.emplace_back(std::move(newExpressionInput));
-        newGroupByArguments.emplace_back(std::move(dynamics[1]));
-        if (dynamics.size() == 3) {
-          newGroupByArguments.emplace_back(std::move(dynamics[2]));
+        if (canPushThrough1) {
+          auto newJoinInput1 = moveExctractedSelectExpressionToTransformation(
+              std::move(dynamics[0]), std::move(extractedExpression), extractedExprSymbols);
+          return boss::ComplexExpression(
+              std::move(head), std::move(statics),
+              boss::ExpressionArguments(std::move(newJoinInput1), std::move(dynamics[1]), std::move(dynamics[2])),
+              std::move(spans));
+        } else if (canPushThrough2) {
+          auto newJoinInput2 = moveExctractedSelectExpressionToTransformation(
+              std::move(dynamics[1]), std::move(extractedExpression), extractedExprSymbols);
+          return boss::ComplexExpression(
+              std::move(head), std::move(statics),
+              boss::ExpressionArguments(std::move(dynamics[0]), std::move(newJoinInput2), std::move(dynamics[2])),
+              std::move(spans));
         }
-        return boss::ComplexExpression(std::move(head), std::move(statics), std::move(newGroupByArguments),
-                                       std::move(spans));
       }
+      // If cannot move through the Join operator, drop to the base case to wrap it with the SELECT operator
     }
-    // If cannot move through the Group operator, drop to the base case to wrap it with the SELECT operator
-  } else if (transformingExpression.getHead() == "Join"_) {
-    // Can push through if the condition is only on one of the Join inputs
-    const auto& constDynamics = transformingExpression.getDynamicArguments();
-
-    const auto& joinInput1 = constDynamics[0];
-    std::unordered_set<Symbol> joinInput1Columns = {};
-    utilities::getUsedSymbolsFromExpressions(joinInput1, joinInput1Columns);
-
-    const auto& joinInput2 = constDynamics[1];
-    std::unordered_set<Symbol> joinInput2Columns = {};
-    utilities::getUsedSymbolsFromExpressions(joinInput2, joinInput2Columns);
-
-    bool canPushThrough1 = true;
-    bool canPushThrough2 = true;
-    bool isInFirstInput = false;
-    bool isInSecondInput = false;
-
-    // Check if the condition is only on the first input of the Join operator
-    for (const auto& symbol : extractedExprSymbols) {
-      isInFirstInput = joinInput1Columns.find(symbol) != joinInput1Columns.end();
-      isInSecondInput = joinInput2Columns.find(symbol) != joinInput2Columns.end();
-
-      // If simultaneously in both inputs, can't push through
-      if (isInFirstInput && isInSecondInput) {
-        canPushThrough1 = false;
-        canPushThrough2 = false;
-        break;
-      }
-      if (!isInFirstInput) {
-        canPushThrough1 = false;
-      }
-      if (!isInSecondInput) {
-        canPushThrough2 = false;
-      }
-      if (!canPushThrough1 && !canPushThrough2) {
-        break;
-      }
-    }
-
-    // Check that they are not both true or both false
-    if (canPushThrough1 != canPushThrough2) {
-      auto [head, statics, dynamics, spans] = std::move(transformingExpression).decompose();
-      if (canPushThrough1) {
-        auto newJoinInput1 =
-            moveExctractedSelectExpressionToTransformation(std::move(std::get<ComplexExpression>(std::move(dynamics[0]))),
-                                                           std::move(extractedExpression), extractedExprSymbols);
-        return boss::ComplexExpression(
-            std::move(head), std::move(statics),
-            boss::ExpressionArguments(std::move(newJoinInput1), std::move(dynamics[1]), std::move(dynamics[2])),
-            std::move(spans));
-      } else if (canPushThrough2) {
-        auto newJoinInput2 =
-            moveExctractedSelectExpressionToTransformation(std::move(std::get<ComplexExpression>(std::move(dynamics[1]))),
-                                                           std::move(extractedExpression), extractedExprSymbols);
-        return boss::ComplexExpression(
-            std::move(head), std::move(statics),
-            boss::ExpressionArguments(std::move(dynamics[0]), std::move(newJoinInput2), std::move(dynamics[2])),
-            std::move(spans));
-      }
-    }
-    // If cannot move through the Join operator, drop to the base case to wrap it with the SELECT operator
+    // Encapsulate the transformingExpression into the new select
+    auto newWhere = boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(extractedExpression)), {});
+    auto newSelect = boss::ComplexExpression(
+        "Select"_, {}, boss::ExpressionArguments(std::move(transformingExpression), std::move(newWhere)), {});
+    return std::move(newSelect);
+  } else {
+    auto newWhere = boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(extractedExpression)), {});
+    auto newSelect =
+        boss::ComplexExpression("Select"_, {}, boss::ExpressionArguments(std::move(expression), std::move(newWhere)), {});
+    return std::move(newSelect);
   }
-  // Encapsulate the transformingExpression into the new select
-  auto newWhere = boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(extractedExpression)), {});
-  auto newSelect = boss::ComplexExpression(
-      "Select"_, {}, boss::ExpressionArguments(std::move(transformingExpression), std::move(newWhere)), {});
-  return std::move(newSelect);
 }
 
+// // Remove unused columns from the Group operator
+// ComplexExpression removeUnusedTransformationColumns(ComplexExpression&& transformationQuery,
+//                                                     const std::unordered_set<Symbol>& usedSymbols,
+//                                                     const std::unordered_set<Symbol>& untouchableColumns) {
+//   if (transformationQuery.getHead() == "Project"_) {
+//     auto [head, statics, dynamics, spans] = std::move(transformationQuery).decompose();
+//     auto projectInput = std::move(dynamics[0]);
+//     Expression newProjectInput = ""_;
+//     if (std::holds_alternative<ComplexExpression>(projectInput)) {
+//       newProjectInput = removeUnusedTransformationColumns(std::move(std::get<ComplexExpression>(std::move(projectInput))),
+//                                                           usedSymbols, untouchableColumns);
+//     } else {
+//       newProjectInput = std::move(projectInput);
+//     }
+//     // auto newProjectInput = removeUnusedTransformationColumns(std::move(projectInput), usedSymbols, untouchableColumns);
+//     auto projectionAsExpr = std::get<ComplexExpression>(std::move(dynamics[1]));
+//     auto [asExprHead, asExprStatics, asExprDynamics, asExprSpans] = std::move(projectionAsExpr).decompose();
+//     ExpressionArguments newAsProjectionArguments = {};
+//     bool removeNext = false;
+//     for (auto& arg : asExprDynamics) {
+//       if (removeNext) {
+//         removeNext = false;
+//         continue;
+//       }
+//       if (std::holds_alternative<Symbol>(arg)) {
+//         Symbol symbol = std::get<Symbol>(std::move(arg));
+//         if (usedSymbols.find(symbol) != usedSymbols.end() || untouchableColumns.find(symbol) != untouchableColumns.end())
+//         {
+//           newAsProjectionArguments.emplace_back(std::move(symbol));
+//         } else {
+//           removeNext = true;
+//         }
+//       } else {
+//         newAsProjectionArguments.emplace_back(std::move(arg));
+//       }
+//     }
+//     auto newProjectionAsExpr =
+//         boss::ComplexExpression(std::move(asExprHead), std::move(asExprStatics),
+//                                 boss::ExpressionArguments(std::move(newAsProjectionArguments)), std::move(asExprSpans));
+//     return boss::ComplexExpression(
+//         std::move(head), std::move(statics),
+//         boss::ExpressionArguments(std::move(newProjectInput), std::move(newProjectionAsExpr)), std::move(spans));
+//   } else {
+//     ExpressionArguments newArguments = {};
+//     auto [head, statics, dynamics, spans] = std::move(transformationQuery).decompose();
+//     for (auto& arg : dynamics) {
+//       if (std::holds_alternative<ComplexExpression>(arg)) {
+//         newArguments.emplace_back(removeUnusedTransformationColumns(std::move(std::get<ComplexExpression>(std::move(arg))),
+//                                                                     usedSymbols, untouchableColumns));
+//       } else {
+//         newArguments.emplace_back(std::move(arg));
+//       }
+//     }
+//     // for (auto it = std::make_move_iterator(dynamics.begin()); it != std::make_move_iterator(dynamics.end());) {
+//     //   if (std::holds_alternative<ComplexExpression>(*it)) {
+//     //     auto complexExpr = std::get<ComplexExpression>(std::move(*it));
+//     //     *it = std::move(removeUnusedTransformationColumns(std::move(complexExpr), usedSymbols, untouchableColumns));
+//     //   }
+//     //   ++it;
+//     // }
+//     return boss::ComplexExpression(std::move(head), std::move(statics),
+//     boss::ExpressionArguments(std::move(newArguments)),
+//                                    std::move(spans));
+//   }
+// }
+// Remove unused columns from the Group operator
 ComplexExpression removeUnusedTransformationColumns(ComplexExpression&& transformationQuery,
                                                     const std::unordered_set<Symbol>& usedSymbols,
                                                     const std::unordered_set<Symbol>& untouchableColumns) {
-  if (transformationQuery.getHead() == "Project"_) {
-    auto [head, statics, dynamics, spans] = std::move(transformationQuery).decompose();
-    auto projectInput = std::get<ComplexExpression>(std::move(dynamics[0]));
-    auto newProjectInput = removeUnusedTransformationColumns(std::move(projectInput), usedSymbols, untouchableColumns);
-    auto projectionAsExpr = std::get<ComplexExpression>(std::move(dynamics[1]));
-    auto [asExprHead, asExprStatics, asExprDynamics, asExprSpans] = std::move(projectionAsExpr).decompose();
-    ExpressionArguments newProjectionArguments = {};
+  if (transformationQuery.getHead() == "As"_) {
+    auto [asExprHead, asExprStatics, asExprDynamics, asExprSpans] = std::move(transformationQuery).decompose();
+    ExpressionArguments newAsProjectionArguments = {};
     bool removeNext = false;
     for (auto& arg : asExprDynamics) {
       if (removeNext) {
@@ -251,30 +321,29 @@ ComplexExpression removeUnusedTransformationColumns(ComplexExpression&& transfor
       if (std::holds_alternative<Symbol>(arg)) {
         Symbol symbol = std::get<Symbol>(std::move(arg));
         if (usedSymbols.find(symbol) != usedSymbols.end() || untouchableColumns.find(symbol) != untouchableColumns.end()) {
-          newProjectionArguments.emplace_back(std::move(symbol));
+          newAsProjectionArguments.emplace_back(std::move(symbol));
         } else {
           removeNext = true;
         }
       } else {
-        newProjectionArguments.emplace_back(std::move(arg));
+        newAsProjectionArguments.emplace_back(std::move(arg));
       }
     }
-    auto newProjectionAsExpr =
-        boss::ComplexExpression(std::move(asExprHead), std::move(asExprStatics),
-                                boss::ExpressionArguments(std::move(newProjectionArguments)), std::move(asExprSpans));
-    return boss::ComplexExpression(
-        std::move(head), std::move(statics),
-        boss::ExpressionArguments(std::move(newProjectInput), std::move(newProjectionAsExpr)), std::move(spans));
+    return boss::ComplexExpression(std::move(asExprHead), std::move(asExprStatics),
+                                   boss::ExpressionArguments(std::move(newAsProjectionArguments)), std::move(asExprSpans));
   } else {
+    ExpressionArguments newArguments = {};
     auto [head, statics, dynamics, spans] = std::move(transformationQuery).decompose();
-    for (auto it = std::make_move_iterator(dynamics.begin()); it != std::make_move_iterator(dynamics.end());) {
-      if (std::holds_alternative<ComplexExpression>(*it)) {
-        auto complexExpr = std::get<ComplexExpression>(std::move(*it));
-        *it = std::move(removeUnusedTransformationColumns(std::move(complexExpr), usedSymbols, untouchableColumns));
+    for (auto& arg : dynamics) {
+      if (std::holds_alternative<ComplexExpression>(arg)) {
+        newArguments.emplace_back(removeUnusedTransformationColumns(std::move(std::get<ComplexExpression>(std::move(arg))),
+                                                                    usedSymbols, untouchableColumns));
+      } else {
+        newArguments.emplace_back(std::move(arg));
       }
-      ++it;
     }
-    return boss::ComplexExpression(std::move(head), std::move(statics), std::move(dynamics), std::move(spans));
+    return boss::ComplexExpression(std::move(head), std::move(statics), boss::ExpressionArguments(std::move(newArguments)),
+                                   std::move(spans));
   }
 }
 
@@ -328,8 +397,8 @@ Expression Engine::processExpression(
               // TODO: Think if the project is needed, or can we run getUsedTransformationColumns on the expression
               auto [head, _, dynamics, unused] = std::move(complexExpr).decompose();
               // Process Project's input expression
-              auto& projectionInputExpr = std::get<ComplexExpression>(dynamics[0]);
-              auto updatedInput = processExpression(std::move(boss::Expression(std::move(projectionInputExpr))),
+              auto& projectionInputExpr = dynamics[0];
+              auto updatedInput = processExpression(std::move(std::move(projectionInputExpr)),
                                                     transformationColumnsDependencies, usedSymbols);
 
               // Extract used symbols from the projection function
@@ -355,6 +424,9 @@ Expression Engine::processExpression(
             return boss::ComplexExpression(head, std::move(statics), std::move(dynamics), std::move(spans));
           },
           [this, transformationColumnsDependencies, &usedSymbols](Symbol&& symbol) -> Expression {
+            if (symbol == "Transformation"_) {
+              return boss::Expression(std::move(symbol));
+            }
             if (utilities::isInTransformationColumns(transformationColumnsDependencies, symbol)) {
               usedSymbols.insert(symbol);
             }
@@ -363,19 +435,29 @@ Expression Engine::processExpression(
           [](auto&& otherExpr) -> Expression { return std::forward<decltype(otherExpr)>(otherExpr); }),
       std::move(inputExpr));
 }
+
 // TODO:
-// Add some reverse transformations
-// ! 1. Add support for other operators: extraction from Join. Propagation through Join, Order, Group, etc.
-// ? 1.1 Propagation is done. Need to add extraction. Also can think of reversing the transformations
-// ! 2. Add support for the extraction of OR operator
-// ! 3. Add memoization
-// ! 4. Evaluate existing code
-// ? 5. Speak with Holger?
+// 1. Ask if there are If conditions or CASE statements already implemented in BOSS
+// 2. Ask/explore more about David benchmarks. Other benchmarks. How to test the engine
+// 3. Consider reverse transformations. "AddMapping"_ operator and others
+// 4. Add memoization. Simple one. Just store the last transformation and check if the new one is the same.
+//   Maybe also ask David about how to better do it.
+// 5. Evaluate existing code
+// 6. Speak with Holger?
+
+// Consider:
+// Add support for the extraction of OR operator
+// Extraction from Where clause in Join (won't affect the performance as conditions are in separate SELECT clauses)
+
 Expression Engine::evaluate(Expression&& expr) {
   return std::visit(
       boss::utilities::overload(
           [this](ComplexExpression&& infoExpr) -> Expression {
             auto [head, statics, dynamics, spans] = std::move(infoExpr).decompose();
+            // if (head == "Memoize"_) {
+            //   this->isTransformationCacheEnabled = true;
+            //   return "Memoization enabled"_;
+            // } else if (head == "ApplyTransformation"_) {
             if (head == "ApplyTransformation"_) {
               if (transformationQueries.size() == 0) {
                 return "Error"_("No transformations added");
@@ -387,6 +469,14 @@ Expression Engine::evaluate(Expression&& expr) {
                   return "Error"_("Transformation index out of bounds"_);
                 }
               }
+              // if (this->isTransformationCacheEnabled) {
+              //   if (this->transformationCache.find(dynamics[0]) != this->transformationCache.end()) {
+              //     return std::move(this->transformationCache[dynamics[0]]);
+              //   } else {
+              //     Expression placeholder = "Placeholder"_();
+              //     this->transformationCache.emplace(std::move(placeholder), std::move(dynamics[0].clone()));
+              //   }
+              // }
               currentTransformationQuery.emplace(
                   transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
               auto currentUntouchableColumns = transformationsUntouchableColumns[index];
@@ -397,8 +487,12 @@ Expression Engine::evaluate(Expression&& expr) {
 
               Expression result = processExpression(std::move(complexExpr), currentColumnDependencies, usedSymbols);
               auto allUsedSymbols = utilities::getAllDependentSymbols(currentColumnDependencies, usedSymbols);
-              result = removeUnusedTransformationColumns(std::move(currentTransformationQuery.value()), allUsedSymbols,
-                                                         currentUntouchableColumns);
+              printf("Used symbols: ");
+              for (const auto& symbol : usedSymbols) {
+                printf("%s, ", symbol.getName().c_str());
+              }
+              currentTransformationQuery.emplace(removeUnusedTransformationColumns(
+                  std::move(currentTransformationQuery.value()), allUsedSymbols, currentUntouchableColumns));
 
               result = replaceTransformSymbolsWithQuery(std::move(result), std::move(currentTransformationQuery.value()));
 
@@ -485,6 +579,16 @@ static std::string expressionToString(Expression&& expr) {
                     expr);
 }
 
+// TODO: fix bugs
+// 1. Before condition extraction, check if inner operators don't depend on it.
+//    e.g. A > 5 (Project (B, sum(A))) should not be extracted
+// 2. Check for renamings. During analysis of underlying operations
+// 3. Make that different transformations can be applied on the same query for different tables
+// 4. Have a separate list for live transformation variables. As after it is renamed, it should not be possible to check have
+// an associated condition with it e.g. "Project"_("Table", "As"_("B"_, "A"_)) should not say that A is used in the
+// transformation
+// 5. Upon extraction, wrap inner union, except, intersect operators into the SELECT operator too
+// 5. Upon extraction check if the condition is not modified in the inner operators
 }  // namespace boss::engines::LazyTransformation
 
 // void Engine::setTransformation() {

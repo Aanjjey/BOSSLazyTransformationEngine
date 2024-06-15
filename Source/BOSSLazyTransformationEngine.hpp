@@ -12,7 +12,7 @@ namespace boss::engines::LazyTransformation {
 
 static const Symbol UNEXCTRACTABLE = Symbol("UNEXCTRACTABLE");
 
-ComplexExpression moveExctractedSelectExpressionToTransformation(ComplexExpression &&transformingExpression,
+ComplexExpression moveExctractedSelectExpressionToTransformation(Expression &&transformingExpression,
                                                                  ComplexExpression &&extractedExpressions,
                                                                  const std::unordered_set<Symbol> &usedSymbols);
 
@@ -27,6 +27,9 @@ class Engine {
   std::vector<ComplexExpression> transformationQueries;
   std::vector<std::unordered_set<Symbol>> transformationsUntouchableColumns;
   std::vector<std::unordered_map<Symbol, std::unordered_set<Symbol>>> transformationsColumnDependencies;
+  std::unordered_map<Expression, Expression> transformationCache;
+  bool isTransformationCacheEnabled = false;
+  bool cacheCurrentTransformationQuery = false;
 
   std::optional<ComplexExpression> currentTransformationQuery;
 

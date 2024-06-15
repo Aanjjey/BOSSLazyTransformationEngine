@@ -165,7 +165,7 @@ bool canMoveConditionThroughProjection(const ComplexExpression& projectionOperat
       } else {
         isSymbolUsedInCondition = false;
       }
-      resultColumn = true;
+      resultColumn = false;
     } else {
       if (!std::holds_alternative<Symbol>(arg)) {
         std::unordered_set<Symbol> usedSymbols = {};
@@ -183,7 +183,7 @@ bool canMoveConditionThroughProjection(const ComplexExpression& projectionOperat
           return false;
         }
       }
-      resultColumn = false;
+      resultColumn = true;
     }
   }
   return true;

@@ -636,12 +636,10 @@ TEST_CASE("Evaluate works correctly") {
   }
 
   SECTION("Complex case") {
-    Expression userExpression = "ApplyTransformation"_(
-        "Select"_("Select"_("Project"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
-                                                "Column"_("C"_, "List"_(7, 8, 9))),
-                                       "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)),
-                            "Where"_("And"_("Greater"_("A"_, 2), "Greater"_("B"_, "C"_)))),
-                  "Where"_("Equal"_("A"_, 8))));
+    Expression userExpression =
+        "ApplyTransformation"_("Select"_("Select"_("Project"_("Transformation"_, "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)),
+                                                   "Where"_("And"_("Greater"_("A"_, 2), "Greater"_("B"_, "C"_)))),
+                                         "Where"_("Equal"_("A"_, 8))));
     Expression updatedUserExpression = engine.evaluate(std::move(userExpression));
 
     CHECK(updatedUserExpression ==
@@ -652,6 +650,185 @@ TEST_CASE("Evaluate works correctly") {
   }
 
   // TODO: add more tests
+}
+
+TEST_CASE("Line") {
+  int x = 1;
+  auto view01 = "GroupBy"_(
+      "Select"_("Project"_(
+                    "Project"_("LINEITEM"_, "As"_("l_newcurrencyextendedprice"_, "Times"_("l_extendedprice"_, 1.1), "l_tax"_,
+                                                  "l_tax"_, "discount"_, "discount"_, "l_returnflag"_, "l_returnflag"_,
+                                                  "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_)),
+                    "As"_("profit"_, "Times"_("l_newcurrencyextendedprice"_, "Minus"_(1, "Plus"_("l_tax"_, "l_discount"_))),
+                          "l_returnflag"_, "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_,
+                          "l_newcurrencyextendedprice"_, "l_newcurrencyextendedprice"_)),
+                "Where"_("Equal"_("l_returnflag"_, 1))),
+      "By"_("l_partkey"_, "l_linestatus"_),
+      "As"_("sum_extendedprice"_, "Sum"_("l_newcurrencyextendedprice"_), "sum_profit"_, "Sum"_("profit"_)));
+
+  auto filteredView02 = "GroupBy"_(
+      "Select"_(move(view01), "Where"_("Equal"_("l_linestatus"_, 0), "Greater"_(x, "l_partkey"_))), "By"_("l_partkey"_),
+      "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("profit"_)));
+
+  auto filteredView03 = "GroupBy"_(
+      "Select"_(move(view01), "Where"_("Equal"_("l_linestatus"_, 1), "Greater"_(x, "l_partkey"_))), "By"_("l_partkey"_),
+      "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("profit"_)));
+
+  auto transform = "AddTransformation"_("GroupBy"_(
+      "Select"_("Project"_(
+                    "Project"_("LINEITEM"_, "As"_("l_newcurrencyextendedprice"_, "Times"_("l_extendedprice"_, 1.1), "l_tax"_,
+                                                  "l_tax"_, "discount"_, "discount"_, "l_returnflag"_, "l_returnflag"_,
+                                                  "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_)),
+                    "As"_("profit"_, "Times"_("l_newcurrencyextendedprice"_, "Minus"_(1, "Plus"_("l_tax"_, "l_discount"_))),
+                          "l_returnflag"_, "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_,
+                          "l_newcurrencyextendedprice"_, "l_newcurrencyextendedprice"_)),
+                "Where"_("Equal"_("l_returnflag"_, 1))),
+      "By"_("l_partkey"_, "l_linestatus"_),
+      "As"_("sum_extendedprice"_, "Sum"_("l_newcurrencyextendedprice"_), "sum_profit"_, "Sum"_("profit"_))));
+
+  auto apply1 = "ApplyTransformation"_(
+      "GroupBy"_("Select"_("Transformation"_, "Where"_("And"_("Equal"_("l_linestatus"_, 0), "Greater"_(1, "l_partkey"_)))),
+                 "By"_("l_partkey"_),
+                 "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("sum_profit"_))));
+
+  auto apply2 = "ApplyTransformation"_(
+      "GroupBy"_("Select"_("Transformation"_, "Where"_("And"_("Equal"_("l_linestatus"_, 1), "Greater"_(1, "l_partkey"_)))),
+                 "By"_("l_partkey"_),
+                 "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("sum_profit"_))));
+
+  auto engine = boss::engines::LazyTransformation::Engine();
+  engine.evaluate(std::move(transform));
+  auto answer1 = engine.evaluate(std::move(apply1));
+  CHECK(answer1 == "True"_());
+  auto answer2 = engine.evaluate(std::move(apply2));
+  CHECK(answer2 == "True"_());
+}
+
+TEST_CASE("Balanced butterfly") {
+  // have all columns from the initial table
+  int x = 1;
+  int y = 2;
+  auto view09 =
+      "Join"_("Project"_("PARTSUPP"_, "As"_("ps_partkey"_, "ps_partkey"_, "ps_suppkey"_, "ps_suppkey"_, "ps_availqty"_,
+                                            "ps_availqty"_, "ps_supplycost"_, "ps_supplycost"_, "ps_total_cost"_,
+                                            "Times"_("ps_supplycost"_, "ps_availqty"_), "ps_comment"_, "ps_comment"_)),
+              "Project"_("SUPPLIER"_, "As"_("s_suppkey"_, "s_suppkey"_, "s_name"_, "s_name"_, "s_address"_, "s_address"_,
+                                            "s_nationkey"_, "s_nationkey"_, "s_phone"_, "s_phone"_, "s_acctbalcurrency"_,
+                                            "Times"_("s_acctbal"_, 1.1), "s_comment"_, "s_comment"_)),
+              "Where"_("Equal"_("s_suppkey"_, "ps_suppkey"_)));
+
+  auto view12 = "Group"_(
+      "Group"_("Select"_(std::move(view09), "Where"_("Greater"_(x, "ps_partkey"_))), "By"_("ps_partkey"_, "s_nationkey"_),
+               "As"_("max_supplycost"_, "Max"_("ps_supplycost"_), "min_supplycost"_, "Min"_("ps_supplycost"_))),
+      "By"_("ps_partkey"_),
+      "As"_("max_max_supplycost"_, "Max"_("max_supplycost"_), "min_min_supplycost"_, "Min"_("min_supplycost"_)));
+
+  auto view14 = "Group"_("Group"_("Select"_(std::move(view09), "Where"_("Greater"_(x, "s_suppkey"_))),
+                                  "By"_("s_suppkey"_, "s_nationkey"_), "As"_("sum_total_cost"_, "Sum"_("ps_total_cost"_)),
+                                  "By"_("s_suppkey"_), "As"_("sum_sum_total_cost"_, "Sum"_("sum_total_cost"_))));
+
+  SECTION("Transform") {
+    auto view14 = "Group"_(
+        "Group"_("Select"_("Transformation"_, "Where"_("Greater"_(x, "ps_partkey"_))), "By"_("ps_partkey"_, "s_nationkey"_),
+                 "As"_("max_supplycost"_, "Max"_("ps_supplycost"_), "min_supplycost"_, "Min"_("ps_supplycost"_))),
+        "By"_("ps_partkey"_),
+        "As"_("max_max_supplycost"_, "Max"_("max_supplycost"_), "min_min_supplycost"_, "Min"_("min_supplycost"_)));
+
+    auto transform = "AddTransformation"_(
+        "Join"_("Project"_("PARTSUPP"_, "As"_("ps_partkey"_, "ps_partkey"_, "ps_suppkey"_, "ps_suppkey"_, "ps_availqty"_,
+                                              "ps_availqty"_, "ps_supplycost"_, "ps_supplycost"_, "ps_total_cost"_,
+                                              "Times"_("ps_supplycost"_, "ps_availqty"_), "ps_comment"_, "ps_comment"_)),
+                "Project"_("SUPPLIER"_, "As"_("s_suppkey"_, "s_suppkey"_, "s_name"_, "s_name"_, "s_address"_, "s_address"_,
+                                              "s_nationkey"_, "s_nationkey"_, "s_phone"_, "s_phone"_, "s_acctbalcurrency"_,
+                                              "Times"_("s_acctbal"_, 1.1), "s_comment"_, "s_comment"_)),
+                "Where"_("Equal"_("s_suppkey"_, "ps_suppkey"_))));
+
+    auto apply = "ApplyTransformation"_("Group"_(
+        "Group"_("Select"_("Transformation"_, "Where"_("Greater"_(1, "ps_partkey"_))), "By"_("ps_partkey"_, "s_nationkey"_),
+                 "As"_("max_supplycost"_, "Max"_("ps_supplycost"_), "min_supplycost"_, "Min"_("ps_supplycost"_))),
+        "By"_("ps_partkey"_),
+        "As"_("max_max_supplycost"_, "Max"_("max_supplycost"_), "min_min_supplycost"_, "Min"_("min_supplycost"_))));
+
+    auto engine = boss::engines::LazyTransformation::Engine();
+    engine.evaluate(std::move(transform));
+    auto answer = engine.evaluate(std::move(apply));
+    CHECK(answer == "True"_());
+  }
+  // auto view13 = "Group"_("Group"_("Select"_(move(view09), "Where"_("Greater"_(y, "s_suppkey"_))),
+  //                                 "By"_("s_suppkey"_, "s_nationkey"_), "As"_("sum_totalcost"_, "Sum"_("ps_total_cost"_))),
+  //                        "By"_("s_suppkey"_), "As"_("sum_sum_totalcost"_, "Sum"_("sum_totalcost"_)));
+}
+
+TEST_CASE("Queries") {
+  int x = 1;
+  // FIRST QUERY untransformed will look like:
+  // Transformation query
+  auto view01 = "GroupBy"_(
+      "Select"_("Project"_(
+                    "Project"_("LINEITEM"_, "As"_("l_newcurrencyextendedprice"_, "Times"_("l_extendedprice"_, 1.1), "l_tax"_,
+                                                  "l_tax"_, "discount"_, "discount"_, "l_returnflag"_, "l_returnflag"_,
+                                                  "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_)),
+                    "As"_("profit"_, "Times"_("l_newcurrencyextendedprice"_, "Minus"_(1, "Plus"_("l_tax"_, "l_discount"_))),
+                          "l_returnflag"_, "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_,
+                          "l_newcurrencyextendedprice"_, "l_newcurrencyextendedprice"_)),
+                "Where"_("Equal"_("l_returnflag"_, 1))),
+      "By"_("l_partkey"_, "l_linestatus"_),
+      "As"_("sum_extendedprice"_, "Sum"_("l_newcurrencyextendedprice"_), "sum_profit"_, "Sum"_("profit"_)));
+
+  // Analysis 1
+  auto filteredView02 =
+      "GroupBy"_("Select"_(move(view01), "Where"_("And"_("Equal"_("l_linestatus"_, 0), "Greater"_(x, "l_partkey"_)))),
+                 "By"_("l_partkey"_),
+                 "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("profit"_)));
+  // Analysis 2
+  auto filteredView03 =
+      "GroupBy"_("Select"_(move(view01), "Where"_("And"_("Equal"_("l_linestatus"_, 1), "Greater"_(x, "l_partkey"_)))),
+                 "By"_("l_partkey"_),
+                 "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum__sum_profit"_, "Sum"_("profit"_)));
+
+  // Second query untransformed will look like:
+  auto view09 =
+      "Join"_("Project"_("PARTSUPP"_, "As"_("ps_partkey"_, "ps_partkey"_, "ps_suppkey"_, "ps_suppkey"_, "ps_availqty"_,
+                                            "ps_availqty"_, "ps_supplycost"_, "ps_supplycost"_, "ps_total_cost"_,
+                                            "Times"_("ps_supplycost"_, "ps_availqty"_), "ps_comment"_, "ps_comment"_)),
+              "Project"_("SUPPLIER"_, "As"_("s_suppkey"_, "s_suppkey"_, "s_name"_, "s_name"_, "s_address"_, "s_address"_,
+                                            "s_nationkey"_, "s_nationkey"_, "s_phone"_, "s_phone"_, "s_acctbalcurrency"_,
+                                            "Times"_("s_acctbal"_, 1.1), "s_comment"_, "s_comment"_)),
+              "Where"_("Equal"_("s_suppkey"_, "ps_suppkey"_)));
+  // Analysis 3
+  auto filteredView10 = "Group"_(
+      "Group"_("Select"_(std::move(view09), "Where"_("Greater"_(x, "ps_partkey"_))), "By"_("ps_partkey"_, "s_nationkey"_),
+               "As"_("max_supplycost"_, "Max"_("ps_supplycost"_), "min_supplycost"_, "Min"_("ps_supplycost"_))),
+      "By"_("ps_partkey"_),
+      "As"_("max_max_supplycost"_, "Max"_("max_supplycost"_), "min_min_supplycost"_, "Min"_("min_supplycost"_)));
+  // Analysis 4
+  auto filteredView11 =
+      "Group"_("Group"_("Select"_(std::move(view09), "Where"_("Greater"_(x, "s_suppkey"_))),
+                        "By"_("s_suppkey"_, "s_nationkey"_), "As"_("sum_total_cost"_, "Sum"_("ps_total_cost"_)),
+                        "By"_("s_suppkey"_), "As"_("sum_sum_total_cost"_, "Sum"_("sum_total_cost"_))));
+  // // First query transformed will look like:
+  // auto query = "GroupBy"_("GroupBy"_("Select"_("Project"_("Project"_("Select"_("LINEITEM",
+  // "Where"_("Equal"_("l_linestatus", 0))), "As"_(
+  //     "l_newcurrencyextendedprice"_, "Times"_("l_extendedprice"_, 1.1), "l_tax"_, "l_tax"_, "l_returnflag"_,
+  //     "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey")), "As"_("profit"_,
+  //     "Times"_("l_newcurrencyextendedprice"_, "Minus"_( 1, "Plus"_("l_tax"_, "l_discount"))), "l_returnflag"_,
+  //     "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_, "l_newcurrencyextendedprice"_,
+  //     "l_newcurrencyextendedprice")), "Where"_("Equal"_("l_returnflag"_, 1))), "By"_("l_partkey"_, "l_linestatus"),
+  //     "As"_("sum_extendedprice"_, "Sum"_("l_newcurrencyextendedprice"), "sum_profit"_, "Sum"_("profit"))),
+  //     "Where"_("Equal"_( "l_linestatus"_, 0))), "Greater"(x, "l_partkey")), "By"_("l_partkey"),
+  //     "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"), "sum__sum_profit"_, "Sum"_("profit"))),
+  //     "By"_("l_partkey"), "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"), "sum__sum_profit"_,
+  //     "Sum"_("profit")));
+  // ))))))
+  // GroupBy[GroupBy[Select[Project[Project[Select[LINEITEM,Where[Equal
+  // [l_linestatus,0]]],As[l_newcurrencyextendedprice,Times[l_extendedprice,1.1],
+  // l_tax,l_tax,l_returnflag,l_returnflag,l_linestatus,l_linestatus,l_partkey,
+  // l_partkey]],As[profit,Times[l_newcurrencyextendedprice,Minus[1,Plus[l_tax,
+  // l_discount]]],l_returnflag,l_returnflag,l_linestatus,l_linestatus,l_partkey,
+  // l_partkey,l_newcurrencyextendedprice,l_newcurrencyextendedprice]],Where[Equal
+  // [l_returnflag,1]]],By[l_partkey,l_linestatus],As[sum_extendedprice,Sum
+  // [l_newcurrencyextendedprice],sum_profit,Sum[profit]]],By[l_partkey],As
+  // [sum_sum_extended_price,Sum[sum_extendedprice],sum__sum_profit,Sum[profit]]]
 }
 
 int main(int argc, char *argv[]) {
