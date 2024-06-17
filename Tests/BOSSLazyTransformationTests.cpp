@@ -831,6 +831,70 @@ TEST_CASE("Queries") {
   // [sum_sum_extended_price,Sum[sum_extendedprice],sum__sum_profit,Sum[profit]]]
 }
 
+TEST_CASE("Test line") {
+  auto transformation = boss::ComplexExpression(
+    "AddTransformation"_(
+          "Group"_(
+            "Select"_(
+              "Project"_(
+                "Project"_(
+                  "LINEITEM"_, 
+                  "As"_("l_newcurrencyextendedprice"_, "Times"_("l_extendedprice"_, 1.1), 
+                        "l_tax"_,"l_tax"_, "l_discount"_, "l_discount"_, "l_returnflag"_, "l_returnflag"_,
+                        "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_)),
+                "As"_("profit"_, "Times"_("l_newcurrencyextendedprice"_, "Minus"_(1.0, "Plus"_("l_tax"_, "l_discount"_))),
+                      "l_returnflag"_, "l_returnflag"_, "l_linestatus"_, "l_linestatus"_, "l_partkey"_, "l_partkey"_,
+                      "l_newcurrencyextendedprice"_, "l_newcurrencyextendedprice"_)),
+              "Where"_("Equal"_("l_returnflag"_, 1))),
+            "By"_("l_partkey"_, "l_linestatus"_),
+            "As"_("sum_extendedprice"_, "Sum"_("l_newcurrencyextendedprice"_), "sum_profit"_, "Sum"_("profit"_))))
+  );
+
+  auto query = boss::ComplexExpression("ApplyTransformation"_(
+    "Group"_(
+      "Select"_(
+        "Transformation"_, 
+        "Where"_("And"_("Equal"_("l_linestatus"_, 1), "Greater"_(20, "l_partkey"_)))), 
+      "By"_("l_partkey"_),
+      "As"_("sum_sum_extended_price"_, "Sum"_("sum_extendedprice"_), "sum_sum_profit"_, "Sum"_("sum_profit"_))),
+      0));
+  
+  auto engine = boss::engines::LazyTransformation::Engine();
+  engine.evaluate(std::move(transformation));
+  auto answer = engine.evaluate(std::move(query));
+  CHECK(answer == "True"_());
+}
+TEST_CASE("Test butterfly") {
+  auto transformation = boss::ComplexExpression("AddTransformation"_("Join"_(
+            "Project"_(
+              "PARTSUPP"_, 
+              "As"_("ps_partkey"_, "ps_partkey"_, "ps_suppkey"_, "ps_suppkey"_, 
+                    "ps_availqty"_,"ps_availqty"_, "ps_supplycost"_, "ps_supplycost"_,
+                    "ps_total_cost"_, "Times"_("ps_supplycost"_, "ps_availqty"_))),
+            "Project"_(
+              "SUPPLIER"_, 
+              "As"_("s_suppkey"_, "s_suppkey"_, "s_nationkey"_, "s_nationkey"_, 
+                    "s_acctbalcurrency"_,"Times"_("s_acctbal"_, 1.1))),
+            "Where"_("Equal"_("ps_suppkey"_, "s_suppkey"_)))));
+
+  auto query = boss::ComplexExpression("ApplyTransformation"_(
+      "Group"_(
+        "Group"_(
+          "Select"_(
+            "Transformation"_,
+            "Where"_("Greater"_(20, "ps_partkey"_))), 
+          "By"_("ps_partkey"_, "s_nationkey"_),
+          "As"_("max_supplycost"_, "Max"_("ps_supplycost"_), "min_supplycost"_, "Min"_("ps_supplycost"_))),
+        "By"_("ps_partkey"_),
+        "As"_("max_max_supplycost"_, "Max"_("max_supplycost"_), "min_min_supplycost"_, "Min"_("min_supplycost"_))),
+        0));
+  
+  auto engine = boss::engines::LazyTransformation::Engine();
+  engine.evaluate(std::move(transformation));
+  auto answer = engine.evaluate(std::move(query));
+  CHECK(answer == "True"_());
+}
+
 int main(int argc, char *argv[]) {
   Catch::Session session;
   session.cli(session.cli() | Catch::clara::Opt(librariesToTest, "library")["--library"]);

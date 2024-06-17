@@ -39,7 +39,6 @@ class Engine {
   //   bool isTransformationCacheEnabled = false;
   //   bool cacheCurrentTransformationQuery = false;
 
-  std::optional<ComplexExpression> currentTransformationQuery;
   ComplexExpression currentTransformationQuery1 = UNEXCTRACTABLE_EXPRESSION.clone();
 
  public:

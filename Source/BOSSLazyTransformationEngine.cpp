@@ -56,7 +56,6 @@ Expression Engine::extractOperatorsFromSelect(
     // If the condition is a complex condition, we need to check each subcondition
     for (auto& andSubcondition : andDynamics) {
       auto subConditionExpr = std::get<ComplexExpression>(std::move(andSubcondition));
-      printf("Head is %s\n", subConditionExpr.getHead().getName().c_str());
       if (utilities::isConditionMoveable(subConditionExpr, transformationColumnsDependencies, usedSymbols)) {
         conditionsToMove.emplace_back(std::move(subConditionExpr));
       } else {
@@ -471,14 +470,6 @@ Expression Engine::evaluate(Expression&& expr) {
                   return "Error"_("Transformation index out of bounds"_);
                 }
               }
-              // if (this->isTransformationCacheEnabled) {
-              //   if (this->transformationCache.find(dynamics[0]) != this->transformationCache.end()) {
-              //     return std::move(this->transformationCache[dynamics[0]]);
-              //   } else {
-              //     Expression placeholder = "Placeholder"_();
-              //     this->transformationCache.emplace(std::move(placeholder), std::move(dynamics[0].clone()));
-              //   }
-              // }
               currentTransformationQuery1 =
                   std::move(transformationQueries[index].clone(expressions::CloneReason::EXPRESSION_WRAPPING));
               // currentTransformationQuery.emplace(
@@ -491,10 +482,6 @@ Expression Engine::evaluate(Expression&& expr) {
 
               Expression result = processExpression(std::move(complexExpr), currentColumnDependencies, usedSymbols);
               auto allUsedSymbols = utilities::getAllDependentSymbols(currentColumnDependencies, usedSymbols);
-              printf("Used symbols: ");
-              for (const auto& symbol : usedSymbols) {
-                printf("%s, ", symbol.getName().c_str());
-              }
               currentTransformationQuery1 = std::move(removeUnusedTransformationColumns(
                   std::move(currentTransformationQuery1), allUsedSymbols, currentUntouchableColumns));
               // currentTransformationQuery.emplace(removeUnusedTransformationColumns(
