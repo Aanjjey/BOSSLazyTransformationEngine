@@ -404,6 +404,21 @@ TEST_CASE("Extract operators from select works correctly") {
           "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
                     "Where"_("Greater"_("C"_, 6))));
   }
+
+  SECTION("Extract with Union inside") {
+    ComplexExpression complexSelectExpressionWithUnion =
+        "Select"_("Union"_("Transformation"_,
+                           "Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3)))),
+                  "Where"_("Equal"_("A"_, 1)));
+    Expression updatedExpression = engine.extractOperatorsFromSelect(std::move(complexSelectExpressionWithUnion),
+                                                                     conditionsToMove, dependencyColumns, usedColumns);
+    CHECK(conditionsToMove.size() == 1);
+    CHECK(conditionsToMove[0] == "Equal"_("A"_, 1));
+    CHECK(updatedExpression ==
+          "Union"_("Transformation"_,
+                   "Select"_("Table"_("Column"_("A"_, "List"_(1)), "Column"_("B"_, "List"_(2)), "Column"_("C"_, "List"_(3))),
+                             "Where"_("Equal"_("A"_, 1)))));
+  }
 }
 
 TEST_CASE("MoveExctractedSelectExpressionToTransformation works correctly") {
@@ -516,6 +531,25 @@ TEST_CASE("MoveExctractedSelectExpressionToTransformation works correctly") {
                                      "Column"_("F"_, "List"_(7, 8, 9))),
                             "Where"_("Equal"_("A"_, "D"_))),
                     "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("D"_, 3)))));
+  }
+
+  SECTION("Propagate through Union first input") {
+    ComplexExpression unionTransformationExpression = "Union"_(
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))),
+        "Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)), "Column"_("C"_, "List"_(7, 8, 9))));
+
+    ComplexExpression complexEqualExpression = "And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_));
+    std::unordered_set<boss::Symbol> usedColumns = {"A"_, "B"_, "C"_};
+
+    ComplexExpression updatedTransformationExpression = moveExctractedSelectExpressionToTransformation(
+        std::move(unionTransformationExpression), std::move(complexEqualExpression), usedColumns);
+    CHECK(updatedTransformationExpression ==
+          "Union"_("Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                      "Column"_("C"_, "List"_(7, 8, 9))),
+                             "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_)))),
+                   "Select"_("Table"_("Column"_("A"_, "List"_(1, 2, 3)), "Column"_("B"_, "List"_(4, 5, 6)),
+                                      "Column"_("C"_, "List"_(7, 8, 9))),
+                             "Where"_("And"_("Equal"_("A"_, 1), "Greater"_("B"_, "C"_))))));
   }
 }
 
@@ -676,8 +710,6 @@ TEST_CASE("Evaluate works correctly") {
                                 "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)),
                      "As"_("A"_, "A"_, "B"_, "B"_, "C"_, "C"_)));
   }
-
-  // TODO: add more tests
 }
 
 TEST_CASE("Line") {
@@ -727,8 +759,6 @@ TEST_CASE("Line") {
 }
 
 TEST_CASE("Balanced butterfly") {
-  // have all columns from the initial table
-
   SECTION("Transform") {
     auto transform = "AddTransformation"_(
         "Join"_("Project"_("PARTSUPP"_, "As"_("ps_partkey"_, "ps_partkey"_, "ps_suppkey"_, "ps_suppkey"_, "ps_availqty"_,

@@ -54,7 +54,7 @@ Expression Engine::extractOperatorsFromSelect(
       conditionsToMove.emplace_back(std::move(conditionExpression));
       return boss::Expression(std::move(processedInput));
     }
-  } else if (conditionExpression.getHead() == "And"_) {  // TODO: Add support for OR operator
+  } else if (conditionExpression.getHead() == "And"_) {
     // You can always extract from the AND operator, unless AND is inside of the OR operator
     // If you have an OR operator, then you can extract the condition if the condition on that column is present
     // in all OR branches
@@ -522,7 +522,6 @@ Expression Engine::processExpression(
               }
               return std::move(expression);
             } else if (complexExpr.getHead() == "Project"_) {
-              // TODO: Think if the project is needed, or can we run getUsedTransformationColumns on the expression
               auto [head, _, dynamics, unused] = std::move(complexExpr).decompose();
               // Process Project's input expression
               auto& projectionInputExpr = dynamics[0];
@@ -658,10 +657,6 @@ Expression Engine::evaluate(Expression&& expr) {
           [](auto&& otherExpr) -> Expression { return std::forward<decltype(otherExpr)>(otherExpr); }),
       std::move(expr));
 }
-
-// TODO: fix bugs
-// 1.5. Extraction from Or operator.
-
 }  // namespace boss::engines::LazyTransformation
 
 static auto& enginePtr(bool initialise = true) {

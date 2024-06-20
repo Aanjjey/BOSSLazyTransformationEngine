@@ -259,22 +259,12 @@ bool canMoveConditionThroughProjection(const ComplexExpression& projectionOperat
   return true;
 }
 
-// TODO: Finish the implementation
+// Part of future work: Extend with reversing the condition when propagate through simple transformations
+// E.g. when go through "Plus"(1, "A"), update the condition to subtract 1 from "A"
 // Checks if the operation is reversible
 bool isOperationReversible(const Expression& expr) {
   if (std::holds_alternative<Symbol>(expr)) {
     return true;
-    // } else if (std::holds_alternative<ComplexExpression>(expr)) {
-    // TODO: Think how to do it properly
-    //   if (std::get<ComplexExpression>(expr).getHead() == "Minus"_) {
-    //     return false;
-    //   } else if (std::get<ComplexExpression>(expr).getHead() == "Plus"_) {
-    //     return false;
-    //   } else if (std::get<ComplexExpression>(expr).getHead() == "Multiply"_) {
-    //     return false;
-    //   } else {
-    //     return false;
-    //   }
   } else {
     return false;
   }
@@ -302,7 +292,7 @@ void buildColumnDependencies(const ComplexExpression& expr,
                                                                     std::make_move_iterator(dependentOnSymbols.end()));
           }
         }
-      } else if (subExpr.getHead() == "Where"_) {  // TODO: Think if other operators should influence untouchableColumns
+      } else if (subExpr.getHead() == "Where"_) {
         std::unordered_set<Symbol> usedSymbols = {};
         utilities::getUsedSymbolsFromExpressions(subExpr.getDynamicArguments()[0], usedSymbols);
         for (const auto& symbol : usedSymbols) {
