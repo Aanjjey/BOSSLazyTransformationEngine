@@ -21,9 +21,13 @@ bool isStaticValue(const Expression &expr);
 bool isInTransformationColumns(const std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
                                const Symbol &symbol);
 
-bool isConditionMoveable(const ComplexExpression &condition,
-                         std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
-                         std::unordered_set<Symbol> &usedSymbols);
+void verifyConditionExtraction(const Expression &inputExpression, const ComplexExpression &condition,
+                               std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
+                               std::vector<bool> &result);
+
+std::vector<bool> isConditionMoveable(const Expression &inputExpression, const ComplexExpression &condition,
+                                      std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumns,
+                                      std::unordered_set<Symbol> &usedSymbols);
 
 void getUsedSymbolsFromExpressions(const Expression &expr, std::unordered_set<Symbol> &usedSymbols);
 
@@ -49,6 +53,8 @@ bool isOperationReversible(const Expression &expr);
 void buildColumnDependencies(const ComplexExpression &expr,
                              std::unordered_map<Symbol, std::unordered_set<Symbol>> &transformationColumnsDependencies,
                              std::unordered_set<Symbol> &untouchableColumns);
+
+Expression wrapOperatorWithSelect(Expression &&expr, ComplexExpression &&condition);
 
 ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression &&outerSelect);
 

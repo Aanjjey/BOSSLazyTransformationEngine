@@ -10,6 +10,7 @@
 #include <typeinfo>
 #include <unordered_set>
 #include <variant>
+#include <vector>
 
 #include "BOSSLazyTransformationEngine.hpp"
 
@@ -29,6 +30,16 @@ bool isCardinalityReducingOperator(const Symbol& op) {
   return cardinalityReducingOps.find(op) != cardinalityReducingOps.end();
 }
 
+bool supportedOperator(const Symbol& op) {
+  static const std::unordered_set<Symbol> supportedOps = {
+      "Select"_,       "Where"_,     "Project"_, "Join"_,  "Union"_,   "Except"_,  "Intersect"_,
+      "Difference"_,   "Sort"_,      "SortBy"_,  "Group"_, "GroupBy"_, "Order"_,   "OrderBy"_,
+      "Table"_,        "And"_,       "Or"_,      "Not"_,   "Equal"_,   "Greater"_, "Less"_,
+      "GreaterEqual"_, "LessEqual"_, "Column"_,  "List"_,  "By"_,      "Top"_,     "Limit"_,
+  };
+  return supportedOps.find(op) != supportedOps.end();
+}
+
 bool isStaticValue(const Expression& expr) {
   return std::holds_alternative<int32_t>(expr) || std::holds_alternative<int64_t>(expr) ||
          std::holds_alternative<float>(expr) || std::holds_alternative<double>(expr) ||
@@ -42,27 +53,84 @@ bool isInTransformationColumns(const std::unordered_map<Symbol, std::unordered_s
   return transformationColumns.find(symbol) != transformationColumns.end();
 }
 
+// Places two bools in the result: one to show if extraction is possible.
+// Another to signify if need to propagate to union, except, intersect
+void verifyConditionExtraction(const Expression& inputExpression, const std::unordered_set<Symbol>& conditionColumns,
+                               std::unordered_map<Symbol, std::unordered_set<Symbol>>& transformationColumns,
+                               std::vector<bool>& result) {
+  if (std::holds_alternative<ComplexExpression>(inputExpression)) {
+    const auto& inputComplexExpression = std::get<ComplexExpression>(inputExpression);
+    if (inputComplexExpression.getHead() == "As"_) {
+      Symbol currentSymbol = Symbol("Symbol");
+      for (const auto& arg : inputComplexExpression.getDynamicArguments()) {
+        // Only a modified column can have complexexpression. If our symbol is there, then cannot extract
+        if (std::holds_alternative<ComplexExpression>(arg)) {
+          std::unordered_set<Symbol> subUsedSymbols = {};
+          getUsedSymbolsFromExpressions(arg, subUsedSymbols, transformationColumns);
+          for (const auto& symbol : conditionColumns) {
+            if (subUsedSymbols.find(symbol) != subUsedSymbols.end()) {
+              result[0] = false;
+              return;
+            }
+          }
+        }
+      }
+    } else if (inputComplexExpression.getHead() == "Union"_ || inputComplexExpression.getHead() == "Except"_ ||
+               inputComplexExpression.getHead() == "Intersect"_ || inputComplexExpression.getHead() == "Difference"_) {
+      result[1] = true;
+      for (const auto& arg : inputComplexExpression.getDynamicArguments()) {
+        verifyConditionExtraction(arg, conditionColumns, transformationColumns, result);
+      }
+    } else if (supportedOperator(inputComplexExpression.getHead())) {
+      for (const auto& arg : inputComplexExpression.getDynamicArguments()) {
+        verifyConditionExtraction(arg, conditionColumns, transformationColumns, result);
+      }
+    } else {
+      std::unordered_set<Symbol> usedSymbols = {};
+      getUsedSymbolsFromExpressions(inputExpression, usedSymbols, transformationColumns);
+      for (const auto& symbol : conditionColumns) {
+        // Used in some unknown function. So extraction is not possible
+        if (usedSymbols.find(symbol) != usedSymbols.end()) {
+          result[0] = false;
+          return;
+        }
+      }
+    }
+  }
+}
+
 // Checks if the condition can be moved to the transformation query by
 // checking if the columns in the condition are in the transformation query
 // result set or are static values. Returns false if only static values are present
-bool isConditionMoveable(const ComplexExpression& condition,
-                         std::unordered_map<Symbol, std::unordered_set<Symbol>>& transformationColumns,
-                         std::unordered_set<Symbol>& usedSymbols) {
+std::vector<bool> isConditionMoveable(const Expression& inputExpression, const ComplexExpression& condition,
+                                      std::unordered_map<Symbol, std::unordered_set<Symbol>>& transformationColumns,
+                                      std::unordered_set<Symbol>& usedSymbols) {
   if (condition.getHead() == "Greater"_ || condition.getHead() == "Equal"_) {
     auto firstColumns = getUsedTransformationColumns(condition.getDynamicArguments()[0], transformationColumns);
     auto secondColumns = getUsedTransformationColumns(condition.getDynamicArguments()[1], transformationColumns);
-    bool result = true;
+    // First value is whether extractable, second is whether inner Union, Except, Intersect are present
+    std::vector<bool> result = {true, false};
     if (firstColumns.find(UNEXCTRACTABLE) != firstColumns.end() ||
         secondColumns.find(UNEXCTRACTABLE) != secondColumns.end() ||
         (firstColumns.size() == 0 && secondColumns.size() == 0)) {
-      result = false;
+      result[0] = false;
+    }
+    if (!result[0]) {
+      return result;
+    }
+    firstColumns.insert(std::make_move_iterator(secondColumns.begin()), std::make_move_iterator(secondColumns.end()));
+    // Condition might be moveable. Now have to validate by processing input
+    // expression, see if it was not modified inside.
+    verifyConditionExtraction(inputExpression, firstColumns, transformationColumns, result);
+    if (!result[0]) {
+      return result;
     }
     usedSymbols.insert(std::make_move_iterator(firstColumns.begin()), std::make_move_iterator(firstColumns.end()));
     usedSymbols.insert(std::make_move_iterator(secondColumns.begin()), std::make_move_iterator(secondColumns.end()));
     usedSymbols.erase(UNEXCTRACTABLE);
     return result;
   }
-  return false;
+  return {false, false};
 }
 
 // Extracts used symbols from the expression
@@ -73,7 +141,8 @@ void getUsedSymbolsFromExpressions(const Expression& expr, std::unordered_set<Sy
 
 // Extracts used symbols from the expression
 // If transformationColumns are empty, then all symbols are added
-// If transformationColumns are not empty, then only the symbols that are in the transformationColumns are added
+// If transformationColumns are not empty, then only the symbols that are in the
+// transformationColumns are added
 void getUsedSymbolsFromExpressions(const Expression& expr, std::unordered_set<Symbol>& usedSymbols,
                                    std::unordered_map<Symbol, std::unordered_set<Symbol>>& transformationColumns) {
   if (std::holds_alternative<Symbol>(expr)) {
@@ -90,7 +159,8 @@ void getUsedSymbolsFromExpressions(const Expression& expr, std::unordered_set<Sy
 }
 
 // Returns a set of transformation columns that are present in the expression
-// Adds UNEXCTRACTABLE to the set if the expression contains a column that is not in the transformation columns
+// Adds UNEXCTRACTABLE to the set if the expression contains a column that is not in the
+// transformation columns
 std::unordered_set<Symbol> getUsedTransformationColumns(
     const Expression& expr, const std::unordered_map<Symbol, std::unordered_set<Symbol>>& transformationColumns) {
   if (std::holds_alternative<ComplexExpression>(expr)) {
@@ -253,6 +323,13 @@ void buildColumnDependencies(const ComplexExpression& expr,
   }
 }
 
+Expression wrapOperatorWithSelect(Expression&& expr, ComplexExpression&& condition) {
+  auto newWhere = boss::ComplexExpression("Where"_, {}, boss::ExpressionArguments(std::move(condition)), {});
+  auto newSelect =
+      boss::ComplexExpression("Select"_, {}, boss::ExpressionArguments(std::move(expr), std::move(newWhere)), {});
+  return boss::Expression(std::move(newSelect));
+}
+
 // Merges two consecutive SELECT operators
 // If there aren't two consecutive SELECT operators, then the original expression is returned
 ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression&& outerSelect) {
@@ -266,9 +343,9 @@ ComplexExpression mergeConsecutiveSelectOperators(ComplexExpression&& outerSelec
   }
   auto innerSelect = std::get<ComplexExpression>(std::move(outerDynamics[0]));
   if (innerSelect.getHead() != "Select"_) {
-    outerSelect = boss::ComplexExpression(
-        std::move(outerHead), std::move(outerStatics),
-        boss::ExpressionArguments(std::move(innerSelect), std::move(outerDynamics[1])), std::move(outerSpans));
+    outerSelect = boss::ComplexExpression(std::move(outerHead), std::move(outerStatics),
+                                          boss::ExpressionArguments(std::move(innerSelect), std::move(outerDynamics[1])),
+                                          std::move(outerSpans));
     return std::move(outerSelect);
   }
 
