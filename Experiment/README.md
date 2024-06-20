@@ -14,3 +14,7 @@ BOSSArrowStorageEngine from int32_support_new_table_format branch. Unchanged
 BOSSVeloxEngine from radix_joins branch. Unchanged
 -	Link: https://github.com/symbol-store/BOSSVeloxEngine/tree/radix_joins
 -	Hash: 3a3cdae
+
+BOSS from main branch. Unchanged
+-	Link: https://github.com/symbol-store/BOSS
+-	Hash: 37fda7c
